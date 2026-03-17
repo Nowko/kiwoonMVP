@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+.Python
 
 .venv/
 venv/
@@ -9,6 +10,10 @@ env/
 
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 data/runtime.db
 data/runtime.db-shm
@@ -19,6 +24,17 @@ data/credentials.json
 data/daily_watch_snapshots/
 
 logs/
+
+.vscode/
+.idea/
+
+build/
+dist/
+*.spec
+
+*.tmp
+*.temp
+*.bak
 
 .DS_Store
 Thumbs.db
