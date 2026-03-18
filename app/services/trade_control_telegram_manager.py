@@ -150,6 +150,10 @@ class TradeControlTelegramManager(QObject):
             return self._show_conditions(bot_token, user_id, chat_id, message_id)
         if area == "cond" and action == "detail" and len(parts) >= 3:
             return self._show_condition_detail(bot_token, user_id, chat_id, parts[2], message_id)
+        if area == "cond" and action == "buy_menu" and len(parts) >= 3:
+            return self._show_condition_buy_menu(bot_token, user_id, chat_id, parts[2], message_id)
+        if area == "cond" and action == "sell_menu" and len(parts) >= 3:
+            return self._show_condition_sell_menu(bot_token, user_id, chat_id, parts[2], message_id)
         if area == "trade" and action == "status":
             return self._show_trade_control(bot_token, user_id, chat_id, message_id)
         if area == "panic" and action == "menu":
@@ -225,6 +229,16 @@ class TradeControlTelegramManager(QObject):
         text, buttons = self.formatter.build_condition_detail(self.action_service.get_condition_slot_detail(slot_no))
         return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
 
+    def _show_condition_buy_menu(self, bot_token, user_id, chat_id, slot_no, message_id=None):
+        slot_row = self.action_service.get_condition_slot_detail(slot_no)
+        text, buttons = self.formatter.build_condition_buy_menu(slot_row, self.action_service.get_assignable_strategies("buy"))
+        return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+
+    def _show_condition_sell_menu(self, bot_token, user_id, chat_id, slot_no, message_id=None):
+        slot_row = self.action_service.get_condition_slot_detail(slot_no)
+        text, buttons = self.formatter.build_condition_sell_menu(slot_row, self.action_service.get_assignable_strategies("sell"))
+        return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+
     def _show_trade_control(self, bot_token, user_id, chat_id, message_id=None):
         text, buttons = self.formatter.build_trade_control(self.action_service.get_trade_enabled())
         return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
@@ -285,6 +299,24 @@ class TradeControlTelegramManager(QObject):
                 "슬롯 {0}의 실시간 등록을 다시 요청하시겠습니까?".format(slot_no),
                 "tc|exec|cond_restart|{0}".format(slot_no),
                 "tc|cond|detail|{0}".format(slot_no),
+            )
+            return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+        if action == "cond_buy" and len(parts) >= 2:
+            slot_no, strategy_no = str(parts[0] or ""), str(parts[1] or "")
+            text, buttons = self.formatter.build_confirm(
+                "매수전략 변경",
+                "슬롯 {0}의 매수전략을 [{1}]로 변경하시겠습니까?".format(slot_no, strategy_no),
+                "tc|exec|cond_buy|{0}|{1}".format(slot_no, strategy_no),
+                "tc|cond|buy_menu|{0}".format(slot_no),
+            )
+            return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+        if action == "cond_sell_toggle" and len(parts) >= 2:
+            slot_no, strategy_no = str(parts[0] or ""), str(parts[1] or "")
+            text, buttons = self.formatter.build_confirm(
+                "매도전략 변경",
+                "슬롯 {0}의 매도전략 [{1}]를 추가 또는 제거하시겠습니까?".format(slot_no, strategy_no),
+                "tc|exec|cond_sell_toggle|{0}|{1}".format(slot_no, strategy_no),
+                "tc|cond|sell_menu|{0}".format(slot_no),
             )
             return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
         return False

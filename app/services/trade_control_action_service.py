@@ -224,6 +224,70 @@ class TradeControlActionService(object):
             "sell_strategy_text": "-",
         }
 
+    def get_assignable_strategies(self, kind):
+        rows = list(self.strategy_manager.get_strategy_catalog(kind, include_unassignable=False) or [])
+        result = []
+        for row in rows:
+            item = dict(row)
+            strategy_no = int(item.get("strategy_no") or 0)
+            if strategy_no <= 0:
+                continue
+            result.append({
+                "strategy_no": strategy_no,
+                "strategy_name": str(item.get("strategy_name") or item.get("strategy_type") or strategy_no),
+                "strategy_type": str(item.get("strategy_type") or ""),
+            })
+        return result
+
+    def set_slot_buy_strategy(self, slot_no, strategy_no):
+        slot_no = int(slot_no or 0)
+        strategy_no = int(strategy_no or 0)
+        resolved = self.strategy_manager.resolve_slot_strategy_policy(slot_no)
+        buy_expression_items = [{"kind": "strategy", "no": strategy_no}]
+        try:
+            sell_strategy_nos = json.loads(resolved.get("sell_strategy_nos_json") or "[]")
+        except Exception:
+            sell_strategy_nos = []
+        self.strategy_manager.save_slot_strategy_policy(
+            slot_no,
+            buy_expression_items,
+            sell_strategy_nos,
+            resolved.get("news_min_score") or 0,
+        )
+        return {
+            "ok": True,
+            "message": "슬롯 {0}의 매수전략을 [{1}]로 변경했습니다.".format(slot_no, strategy_no),
+        }
+
+    def toggle_slot_sell_strategy(self, slot_no, strategy_no):
+        slot_no = int(slot_no or 0)
+        strategy_no = int(strategy_no or 0)
+        resolved = self.strategy_manager.resolve_slot_strategy_policy(slot_no)
+        try:
+            buy_expression_items = json.loads(resolved.get("buy_expression_json") or "[]")
+        except Exception:
+            buy_expression_items = []
+        try:
+            sell_strategy_nos = list(json.loads(resolved.get("sell_strategy_nos_json") or "[]"))
+        except Exception:
+            sell_strategy_nos = []
+        if strategy_no in sell_strategy_nos:
+            sell_strategy_nos = [no for no in sell_strategy_nos if int(no or 0) != strategy_no]
+            action_text = "제거"
+        else:
+            sell_strategy_nos.append(strategy_no)
+            action_text = "추가"
+        self.strategy_manager.save_slot_strategy_policy(
+            slot_no,
+            buy_expression_items,
+            sell_strategy_nos,
+            resolved.get("news_min_score") or 0,
+        )
+        return {
+            "ok": True,
+            "message": "슬롯 {0}의 매도전략에 [{1}]를 {2}했습니다.".format(slot_no, strategy_no, action_text),
+        }
+
     def get_open_orders(self, account_no):
         account_no = str(account_no or "").strip()
         rows = list(
@@ -336,6 +400,10 @@ class TradeControlActionService(object):
             return self.toggle_condition_slot(parts[0])
         if action == "cond_restart" and len(parts) >= 1:
             return self.restart_condition_slot(parts[0])
+        if action == "cond_buy" and len(parts) >= 2:
+            return self.set_slot_buy_strategy(parts[0], parts[1])
+        if action == "cond_sell_toggle" and len(parts) >= 2:
+            return self.toggle_slot_sell_strategy(parts[0], parts[1])
         return {"ok": False, "message": "지원하지 않는 요청입니다."}
 
     def _fmt_num(self, value, signed=False):

@@ -192,9 +192,47 @@ class TradeControlTelegramFormatter(object):
         slot_no = row.get("slot_no") or 0
         buttons = [
             [self._btn("활성 전환", "tc|confirm|cond_toggle|{0}".format(slot_no)), self._btn("실시간 재등록", "tc|confirm|cond_restart|{0}".format(slot_no))],
+            [self._btn("매수전략 변경", "tc|cond|buy_menu|{0}".format(slot_no)), self._btn("매도전략 변경", "tc|cond|sell_menu|{0}".format(slot_no))],
             [self._btn("뒤로", "tc|cond|list"), self._btn("메인 메뉴", "tc|menu|home")],
         ]
         return text, self._markup(buttons)
+
+    def build_condition_buy_menu(self, slot_row, strategy_rows):
+        lines = [
+            "[매수전략 변경]",
+            "",
+            "슬롯: {0}".format(slot_row.get("slot_no") or 0),
+            "조건식: {0}".format(slot_row.get("condition_name") or "-"),
+            "현재 매수전략: {0}".format(slot_row.get("buy_strategy_text") or "-"),
+            "",
+        ]
+        buttons = []
+        for row in strategy_rows:
+            label = "[{0}] {1}".format(row.get("strategy_no") or 0, row.get("strategy_name") or "-")
+            buttons.append([self._btn(label, "tc|confirm|cond_buy|{0}|{1}".format(slot_row.get("slot_no") or 0, row.get("strategy_no") or 0))])
+        buttons.append([self._btn("뒤로", "tc|cond|detail|{0}".format(slot_row.get("slot_no") or 0))])
+        return "\n".join(lines), self._markup(buttons)
+
+    def build_condition_sell_menu(self, slot_row, strategy_rows):
+        lines = [
+            "[매도전략 변경]",
+            "",
+            "슬롯: {0}".format(slot_row.get("slot_no") or 0),
+            "조건식: {0}".format(slot_row.get("condition_name") or "-"),
+            "현재 매도전략: {0}".format(slot_row.get("sell_strategy_text") or "-"),
+            "",
+            "버튼을 누르면 추가/제거가 전환됩니다.",
+        ]
+        buttons = []
+        selected_text = str(slot_row.get("sell_strategy_text") or "")
+        for row in strategy_rows:
+            strategy_no = row.get("strategy_no") or 0
+            strategy_name = row.get("strategy_name") or "-"
+            selected = "[ON] " if "[{0}]".format(strategy_no) in selected_text else ""
+            label = "{0}[{1}] {2}".format(selected, strategy_no, strategy_name)
+            buttons.append([self._btn(label, "tc|confirm|cond_sell_toggle|{0}|{1}".format(slot_row.get("slot_no") or 0, strategy_no))])
+        buttons.append([self._btn("뒤로", "tc|cond|detail|{0}".format(slot_row.get("slot_no") or 0))])
+        return "\n".join(lines), self._markup(buttons)
 
     def build_confirm(self, title, body, confirm_callback, cancel_callback="tc|menu|home"):
         return "[확인]\n\n{0}\n\n{1}".format(title, body), self._markup([
