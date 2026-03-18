@@ -2638,7 +2638,7 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self.lbl_daily_review_status, 1)
         review_layout.addLayout(top_row)
 
-        help_label = QLabel("이 구역은 HTS 원장값이 아니라 프로그램 복기 스냅샷입니다. 보유 평가손익과 체결기록 기준 내부 실현손익을 함께 확인합니다.")
+        help_label = QLabel("이 구역은 프로그램 복기 스냅샷입니다. 당일 보유 종목의 총평가금액과 실현손익, 그리고 그 합산 값을 함께 확인합니다.")
         help_label.setWordWrap(True)
         review_layout.addWidget(help_label)
 
@@ -2646,9 +2646,9 @@ class MainWindow(QMainWindow):
         self.table_daily_review_summary.setHorizontalHeaderLabels([
             "계좌",
             "기록시각",
-            "보유평가손익",
-            "내부실현",
-            "내부합산",
+            "보유평가",
+            "실현손익",
+            "합산금액",
             "보유종목 수",
             "매도종목 수",
         ])
@@ -2684,7 +2684,7 @@ class MainWindow(QMainWindow):
             "계좌",
             "종목명(코드)",
             "기준가",
-            "평가손익",
+            "보유평가",
             "실현손익",
         ])
         item_header = self.table_daily_review_items.horizontalHeader()
@@ -5470,9 +5470,12 @@ class MainWindow(QMainWindow):
             total_buy = api_total_buy if api_total_buy > 0 else float(live_summary.get("total_buy", 0.0) or 0.0)
             total_eval = api_total_eval if api_total_eval > 0 else float(live_summary.get("total_eval", 0.0) or 0.0)
             total_profit = api_total_profit if api_total_profit != 0 else float(row["eval_profit_total"] or 0)
+            holding_profit_total = float(live_summary.get("eval_profit_total", 0.0) or 0.0)
             summary_realized_profit = float(row["realized_profit_total"] or 0)
             cycle_realized_profit = float(cycle_realized_map.get(account_no, 0.0) or 0.0)
-            if api_realized_profit != 0:
+            if api_total_profit != 0:
+                realized_profit_total = api_total_profit - holding_profit_total
+            elif api_realized_profit != 0:
                 realized_profit_total = api_realized_profit
             elif summary_realized_profit != 0:
                 realized_profit_total = summary_realized_profit

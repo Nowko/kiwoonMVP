@@ -466,14 +466,16 @@ class OrderManager(QObject):
         cycle = self._find_open_cycle(account_no, code) or {}
         condition_name = self._resolve_cycle_condition_name_for_review(cycle, active_state=active_state)
         strategy_text = self._resolve_strategy_text_for_review(cycle=cycle, active_state=active_state)
-        eval_profit = float(position_row.get("eval_profit") or 0.0)
+        qty = int(position_row.get("qty") or 0)
+        ref_price = float(position_row.get("current_price") or 0.0)
+        eval_amount = ref_price * max(0, qty)
         cycle_extra = self._load_cycle_extra(cycle)
         entry_market_metrics = self._merge_entry_market_metrics(
             cycle_extra.get("entry_market_metrics"),
             active_state.get("entry_market_metrics"),
         )
         extra_payload = {
-            "qty": int(position_row.get("qty") or 0),
+            "qty": qty,
             "eval_rate": float(position_row.get("eval_rate") or 0.0),
             "buy_chain_id": str(position_row.get("buy_chain_id") or ""),
         }
@@ -488,10 +490,10 @@ class OrderManager(QObject):
             "code": code,
             "name": str(position_row.get("name") or code),
             "avg_price": float(position_row.get("avg_price") or 0.0),
-            "ref_price": float(position_row.get("current_price") or 0.0),
-            "eval_profit": eval_profit,
+            "ref_price": ref_price,
+            "eval_profit": eval_amount,
             "realized_profit": 0.0,
-            "contribution_profit": eval_profit,
+            "contribution_profit": eval_amount,
             "strategy_text": strategy_text,
             "condition_name": condition_name,
             "cycle_id": str(cycle.get("cycle_id") or ""),
