@@ -1082,6 +1082,13 @@ class MainWindow(QMainWindow):
 
     def _populate_strategy_catalog_table(self, kind, table):
         rows = self._get_strategy_catalog_rows(kind)
+        previous_rows = table.rowCount()
+        for row_index in range(previous_rows):
+            old_widget = table.cellWidget(row_index, 1)
+            if old_widget is not None:
+                table.removeCellWidget(row_index, 1)
+                old_widget.deleteLater()
+        table.clearContents()
         table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             item_no = QTableWidgetItem(str(row["strategy_no"]))
@@ -1183,8 +1190,8 @@ class MainWindow(QMainWindow):
             )
         return colored
 
-    def _make_strategy_name_label(self, text, tooltip=""):
-        label = QLabel(self)
+    def _make_strategy_name_label(self, text, tooltip="", parent=None):
+        label = QLabel(parent or self)
         label.setTextFormat(Qt.RichText)
         label.setText(self._colorize_strategy_name_html(text))
         label.setToolTip(str(tooltip or text or ""))
@@ -1194,7 +1201,15 @@ class MainWindow(QMainWindow):
         return label
 
     def _set_strategy_name_cell(self, table, row_index, column_index, text, tooltip=""):
-        table.setCellWidget(row_index, column_index, self._make_strategy_name_label(text, tooltip=tooltip))
+        old_widget = table.cellWidget(row_index, column_index)
+        if old_widget is not None:
+            table.removeCellWidget(row_index, column_index)
+            old_widget.deleteLater()
+        table.setCellWidget(
+            row_index,
+            column_index,
+            self._make_strategy_name_label(text, tooltip=tooltip, parent=table),
+        )
 
     def _show_strategy_catalog_item_detail(self, table, item):
         if table is None or item is None:
