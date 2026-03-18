@@ -47,6 +47,8 @@ class AccountActivationManager(QObject):
             "deposit_cash": 0.0,
             "orderable_cash": 0.0,
             "estimated_assets": 0.0,
+            "api_total_eval": 0.0,
+            "api_total_profit": 0.0,
         }
 
     def _encrypt_value(self, value):
@@ -94,7 +96,7 @@ class AccountActivationManager(QObject):
         self.log_emitted.emit("✅ 활성 계좌: {0}".format(", ".join(self.active_accounts) if self.active_accounts else "없음"))
         self.accounts_changed.emit()
 
-    def set_account_live_settings(self, account_no, order_budget_mode=None, order_budget_value=None, hoga_gb=None, limit_price_option=None, unfilled_policy=None, first_wait_sec=None, second_wait_sec=None, query_password_mode=None, query_password=None, deposit_cash=None, orderable_cash=None, estimated_assets=None, emit_signal=True):
+    def set_account_live_settings(self, account_no, order_budget_mode=None, order_budget_value=None, hoga_gb=None, limit_price_option=None, unfilled_policy=None, first_wait_sec=None, second_wait_sec=None, query_password_mode=None, query_password=None, deposit_cash=None, orderable_cash=None, estimated_assets=None, api_total_eval=None, api_total_profit=None, emit_signal=True):
         row = self.persistence.fetchone("SELECT settings_json FROM accounts WHERE account_no=?", (account_no,))
         if not row:
             return
@@ -151,6 +153,16 @@ class AccountActivationManager(QObject):
         if estimated_assets is not None:
             try:
                 settings["estimated_assets"] = float(estimated_assets)
+            except Exception:
+                pass
+        if api_total_eval is not None:
+            try:
+                settings["api_total_eval"] = float(api_total_eval)
+            except Exception:
+                pass
+        if api_total_profit is not None:
+            try:
+                settings["api_total_profit"] = float(api_total_profit)
             except Exception:
                 pass
         self.persistence.execute(
@@ -230,5 +242,7 @@ class AccountActivationManager(QObject):
                 "deposit_cash": float(settings.get("deposit_cash", 0.0) or 0.0),
                 "orderable_cash": float(settings.get("orderable_cash", 0.0) or 0.0),
                 "estimated_assets": float(settings.get("estimated_assets", 0.0) or 0.0),
+                "api_total_eval": float(settings.get("api_total_eval", 0.0) or 0.0),
+                "api_total_profit": float(settings.get("api_total_profit", 0.0) or 0.0),
             })
         return data

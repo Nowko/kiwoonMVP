@@ -1671,17 +1671,25 @@ class OrderManager(QObject):
         deposit_cash = float(summary.get("deposit_cash") or 0)
         orderable_cash = float(summary.get("orderable_cash") or 0)
         estimated_assets = float(summary.get("estimated_assets") or 0)
+        api_total_eval = float(summary.get("api_total_eval") or 0)
+        api_total_profit = float(summary.get("api_total_profit") or 0)
         if deposit_cash <= 0 and previous_cash.get("deposit_cash", 0.0) > 0:
             deposit_cash = float(previous_cash.get("deposit_cash") or 0.0)
         if orderable_cash <= 0 and previous_cash.get("orderable_cash", 0.0) > 0:
             orderable_cash = float(previous_cash.get("orderable_cash") or 0.0)
         if estimated_assets <= 0 and previous_cash.get("estimated_assets", 0.0) > 0:
             estimated_assets = float(previous_cash.get("estimated_assets") or 0.0)
+        if api_total_eval <= 0 and previous_cash.get("api_total_eval", 0.0) > 0:
+            api_total_eval = float(previous_cash.get("api_total_eval") or 0.0)
+        if api_total_profit == 0 and previous_cash.get("api_total_profit", 0.0) != 0:
+            api_total_profit = float(previous_cash.get("api_total_profit") or 0.0)
         self.account_manager.set_account_live_settings(
             account_no,
             deposit_cash=deposit_cash,
             orderable_cash=orderable_cash,
             estimated_assets=estimated_assets,
+            api_total_eval=api_total_eval,
+            api_total_profit=api_total_profit,
             emit_signal=False,
         )
         self.summaries_changed.emit()
@@ -1757,17 +1765,25 @@ class OrderManager(QObject):
         deposit_cash = float(summary.get("deposit_cash") or 0)
         orderable_cash = float(summary.get("orderable_cash") or 0)
         estimated_assets = float(summary.get("estimated_assets") or 0)
+        api_total_eval = float(summary.get("api_total_eval") or 0)
+        api_total_profit = float(summary.get("api_total_profit") or 0)
         if deposit_cash <= 0 and previous_cash.get("deposit_cash", 0.0) > 0:
             deposit_cash = float(previous_cash.get("deposit_cash") or 0.0)
         if orderable_cash <= 0 and previous_cash.get("orderable_cash", 0.0) > 0:
             orderable_cash = float(previous_cash.get("orderable_cash") or 0.0)
         if estimated_assets <= 0 and previous_cash.get("estimated_assets", 0.0) > 0:
             estimated_assets = float(previous_cash.get("estimated_assets") or 0.0)
+        if api_total_eval <= 0 and previous_cash.get("api_total_eval", 0.0) > 0:
+            api_total_eval = float(previous_cash.get("api_total_eval") or 0.0)
+        if api_total_profit == 0 and previous_cash.get("api_total_profit", 0.0) != 0:
+            api_total_profit = float(previous_cash.get("api_total_profit") or 0.0)
         self.account_manager.set_account_live_settings(
             account_no,
             deposit_cash=deposit_cash,
             orderable_cash=orderable_cash,
             estimated_assets=estimated_assets,
+            api_total_eval=api_total_eval,
+            api_total_profit=api_total_profit,
         )
         self.persistence.write_event("account_positions_sync", payload)
         self._refresh_tracked_symbol_flags(list(incoming_codes.union(set(removed_codes))))
