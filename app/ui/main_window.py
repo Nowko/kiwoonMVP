@@ -1416,18 +1416,39 @@ class MainWindow(QMainWindow):
             "포착시각",
         ])
         header = self.table_analysis_monitor.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        for col_index in range(6):
+            header.setSectionResizeMode(col_index, QHeaderView.Fixed)
+        self.table_analysis_monitor.setColumnWidth(0, 220)
+        self.table_analysis_monitor.setColumnWidth(1, 110)
+        self.table_analysis_monitor.setColumnWidth(2, 88)
+        self.table_analysis_monitor.setColumnWidth(3, 90)
+        self.table_analysis_monitor.setColumnWidth(4, 110)
+        self.table_analysis_monitor.setColumnWidth(5, 90)
+        self.table_analysis_monitor.horizontalHeader().setStretchLastSection(False)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self.table_analysis_monitor.verticalHeader().setVisible(False)
         self.table_analysis_monitor.verticalHeader().setDefaultSectionSize(26)
         self.table_analysis_monitor.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table_analysis_monitor.setSelectionMode(QAbstractItemView.NoSelection)
         self.table_analysis_monitor.setFocusPolicy(Qt.NoFocus)
         self.table_analysis_monitor.setAlternatingRowColors(True)
+        self.table_analysis_monitor.setStyleSheet(
+            "QTableWidget {"
+            "background-color: #08111b;"
+            "alternate-background-color: #0d1825;"
+            "color: #f5d36a;"
+            "gridline-color: #1f3042;"
+            "font-family: Consolas, 'Courier New';"
+            "font-size: 11pt;"
+            "}"
+            "QHeaderView::section {"
+            "background-color: #13263a;"
+            "color: #f6f8fb;"
+            "padding: 6px 8px;"
+            "border: 1px solid #1f3042;"
+            "font-weight: 700;"
+            "}"
+        )
         layout.addWidget(self.table_analysis_monitor)
         return widget
 
@@ -5688,20 +5709,25 @@ class MainWindow(QMainWindow):
         state = str(current_state or "").strip().upper()
         event_type = str(event_type or "").strip().lower()
         mapping = {
-            "DETECTED": "포착됨",
-            "BUY_BLOCKED": "분석 후 제외",
+            "DETECTED": "검토 중",
+            "BUY_BLOCKED": "매수 제외",
             "BUY_REJECTED": "매수 거부",
-            "BUY_PENDING": "매수 대기",
-            "BUY_SUBMITTED": "매수 주문",
-            "BUY_ORDERED": "매수 주문",
-            "HOLDING": "보유 중",
+            "BUY_PENDING": "매수 진행",
+            "BUY_REQUESTED": "매수 진행",
+            "BUY_SUBMITTED": "매수 진행",
+            "BUY_ORDER_PENDING": "매수 진행",
+            "BUY_ORDERED": "매수 완료",
+            "BUY_PARTIAL": "매수 진행",
+            "SIMULATED_HOLDING": "매수 완료",
+            "HOLDING": "매수 완료",
             "ARCHIVE_READY": "이탈 감지",
+            "CLOSED": "종료",
         }
         if state in mapping:
             return mapping.get(state, state)
         if event_type == "condition_snapshot":
-            return "분석 재확인"
-        return "포착됨"
+            return "재검토"
+        return "검토 중"
 
     def _build_analysis_monitor_row_data(self, raw_row):
         raw_row = dict(raw_row or {})
@@ -5754,12 +5780,24 @@ class MainWindow(QMainWindow):
             item = table.item(row_index, col_index)
             if item is None:
                 item = QTableWidgetItem("")
-                if col_index == 3:
+                if col_index in [3, 5]:
                     item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+                elif col_index == 4:
+                    item.setTextAlignment(int(Qt.AlignCenter))
                 table.setItem(row_index, col_index, item)
             item.setText(str(value_text))
+            item.setForeground(QColor("#f5d36a"))
             if col_index == 2:
                 item.setData(Qt.UserRole, str(row_data.get("code") or ""))
+        result_text = str(row_data.get("result") or "")
+        result_item = table.item(row_index, 4)
+        if result_item is not None:
+            if result_text == "매수 완료":
+                result_item.setForeground(QColor("#4da3ff"))
+            elif result_text in ["매수 진행", "검토 중", "재검토"]:
+                result_item.setForeground(QColor("#f5d36a"))
+            elif result_text in ["매수 제외", "매수 거부", "이탈 감지", "종료"]:
+                result_item.setForeground(QColor("#ff6a5a"))
 
     def _append_analysis_monitor_row(self, row_data):
         table = getattr(self, "table_analysis_monitor", None)
