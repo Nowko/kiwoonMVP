@@ -2592,7 +2592,7 @@ class MainWindow(QMainWindow):
     def _build_scope_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        summary = QLabel("청산 완료 건 기준 승률과 누적 손익을 매수 전략별로 집계합니다.")
+        summary = QLabel("이 표는 HTS/API 잔고가 아니라 프로그램 체결기록 기준의 전략별 내부 복기입니다. 운영 탭 값과 다를 수 있습니다.")
         summary.setWordWrap(True)
         layout.addWidget(summary)
 
@@ -2606,7 +2606,7 @@ class MainWindow(QMainWindow):
             "승",
             "패",
             "승률",
-            "누적손익",
+            "내부누적",
         ])
         header = self.table_strategy_analysis.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -2638,7 +2638,7 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self.lbl_daily_review_status, 1)
         review_layout.addLayout(top_row)
 
-        help_label = QLabel("기록이 있는 날짜만 선택할 수 있으며, 보유 평가손익과 당일 매도 실현손익을 함께 복기합니다.")
+        help_label = QLabel("이 구역은 HTS 원장값이 아니라 프로그램 복기 스냅샷입니다. 보유 평가손익과 체결기록 기준 내부 실현손익을 함께 확인합니다.")
         help_label.setWordWrap(True)
         review_layout.addWidget(help_label)
 
@@ -2647,8 +2647,8 @@ class MainWindow(QMainWindow):
             "계좌",
             "기록시각",
             "보유평가손익",
-            "실현손익",
-            "합산손익",
+            "내부실현",
+            "내부합산",
             "보유종목 수",
             "매도종목 수",
         ])
@@ -2676,7 +2676,7 @@ class MainWindow(QMainWindow):
             "조건식",
             "기준가",
             "보유평가손익",
-            "실현손익",
+            "내부실현",
             "합산기여",
         ])
         self.table_daily_review_items.setColumnCount(5)
