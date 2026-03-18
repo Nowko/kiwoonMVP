@@ -21,6 +21,7 @@ class ConditionCatalogManager(QObject):
         self._pending_snapshot_job_keys = set()
         self._snapshot_refresh_last_ts = {}
         self._snapshot_refresh_cooldown_sec = 90.0
+        self._initial_tr_condition_priority_count = 3
         self._realtime_start_queue = []
         self._realtime_start_attempts = {}
         self._realtime_start_timer = QTimer(self)
@@ -318,13 +319,30 @@ class ConditionCatalogManager(QObject):
         slot = self._find_slot_by_condition_index(payload.get("condition_index"))
         slot_no = int(slot["slot_no"]) if slot else 0
         codes = payload.get("codes", [])
+        priority_count = max(0, int(self._initial_tr_condition_priority_count or 0))
         self.persistence.execute(
             "UPDATE active_condition_slots SET current_count=?, last_event_at=?, updated_at=? WHERE slot_no=?",
             (len(codes), self.persistence.now_ts(), self.persistence.now_ts(), slot_no),
         )
-        for code in codes:
+        if len(codes) > priority_count > 0:
+            self.log_emitted.emit(
+                "⏳ 초기 편입 후속처리 분산: 슬롯 {0} / 즉시 {1}건, 지연 {2}건".format(
+                    slot_no,
+                    min(len(codes), priority_count),
+                    max(0, len(codes) - priority_count),
+                )
+            )
+        for index, code in enumerate(codes):
             symbol_row = self._upsert_tracked_symbol(code, slot_no, payload.get("condition_name", ""), "DETECTED", refresh_reference=False)
-            self._enqueue_snapshot_detection_job(code, slot_no, payload.get("condition_name", ""))
+            delay_ms = 0
+            if priority_count > 0 and index >= priority_count:
+                delay_ms = 2500 + ((index - priority_count) * 700)
+            self._enqueue_snapshot_detection_job(
+                code,
+                slot_no,
+                payload.get("condition_name", ""),
+                delay_ms=delay_ms,
+            )
             if not symbol_row:
                 continue
         self.slots_changed.emit()
