@@ -192,6 +192,18 @@ class MainWindow(QMainWindow):
         self._news_watch_refresh_batch_timer = QTimer(self)
         self._news_watch_refresh_batch_timer.setSingleShot(True)
         self._news_watch_refresh_batch_timer.timeout.connect(self._process_news_watch_refresh_batch)
+        self._analysis_monitor_refresh_pending = True
+        self._analysis_monitor_refresh_running = False
+        self._analysis_monitor_refresh_rows = []
+        self._analysis_monitor_refresh_index = 0
+        self._analysis_monitor_max_rows = 200
+        self._analysis_monitor_batch_size = 40
+        self._refresh_analysis_monitor_timer = QTimer(self)
+        self._refresh_analysis_monitor_timer.setSingleShot(True)
+        self._refresh_analysis_monitor_timer.timeout.connect(self.refresh_analysis_monitor)
+        self._analysis_monitor_refresh_batch_timer = QTimer(self)
+        self._analysis_monitor_refresh_batch_timer.setSingleShot(True)
+        self._analysis_monitor_refresh_batch_timer.timeout.connect(self._process_analysis_monitor_refresh_batch)
         self._realtime_reference_board_rows = [None] * 10
         self._realtime_reference_board_index = 0
         self._realtime_reference_board_count = 0
@@ -1372,6 +1384,51 @@ class MainWindow(QMainWindow):
         self.log_view.setReadOnly(True)
         self.log_view.document().setMaximumBlockCount(3000)
         layout.addWidget(self.log_view)
+        return widget
+
+    def _build_right_panel(self):
+        self.right_tabs = QTabWidget()
+        self.right_tabs.addTab(self._build_realtime_reference_tab(), "실시간 참고값")
+        self.right_tabs.addTab(self._build_strategy_detail_tab(), "전략 상세")
+        self.right_tabs.addTab(self._build_scope_tab(), "전략별 분석")
+        self.right_tabs.addTab(self._build_operations_tab(), "운영")
+        self.right_tabs.addTab(self._build_news_watch_tab(), "뉴스감시")
+        self.right_tabs.addTab(self._build_analysis_monitor_tab(), "실시간 분석")
+        self.right_tabs.addTab(self._build_spam_tab(), "스팸 관리")
+        self.right_tabs.addTab(self._build_log_tab(), "로그")
+        return self.right_tabs
+
+    def _build_analysis_monitor_tab(self):
+        widget = QWidget(self)
+        self.analysis_monitor_tab_widget = widget
+        layout = QVBoxLayout(widget)
+        self.analysis_monitor_loading_label = QLabel("실시간 분석 데이터 로딩 중...")
+        self.analysis_monitor_loading_label.setStyleSheet("color: #8a5a00; font-weight: 700; background: #fff4d6; padding: 6px 8px; border: 1px solid #f2d28b;")
+        self.analysis_monitor_loading_label.setVisible(False)
+        layout.addWidget(self.analysis_monitor_loading_label)
+        self.table_analysis_monitor = QTableWidget(0, 6, self)
+        self.table_analysis_monitor.setHorizontalHeaderLabels([
+            "검색식",
+            "종목명",
+            "코드",
+            "현재가",
+            "판정결과",
+            "포착시각",
+        ])
+        header = self.table_analysis_monitor.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table_analysis_monitor.verticalHeader().setVisible(False)
+        self.table_analysis_monitor.verticalHeader().setDefaultSectionSize(26)
+        self.table_analysis_monitor.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table_analysis_monitor.setSelectionMode(QAbstractItemView.NoSelection)
+        self.table_analysis_monitor.setFocusPolicy(Qt.NoFocus)
+        self.table_analysis_monitor.setAlternatingRowColors(True)
+        layout.addWidget(self.table_analysis_monitor)
         return widget
 
     def _create_policy_slot_tab(self, policy_key, condition_label):
@@ -2747,6 +2804,7 @@ class MainWindow(QMainWindow):
         self.condition_manager.catalog_changed.connect(self._on_catalog_changed)
         self.condition_manager.slots_changed.connect(self._on_slots_changed)
         self.condition_manager.tracked_symbol_changed.connect(self._schedule_refresh_news_watch)
+        self.condition_manager.symbol_detected.connect(self._on_analysis_monitor_symbol_detected)
         self.edt_condition_search.textChanged.connect(self.refresh_condition_catalog)
         self.btn_assign_slot.clicked.connect(self._assign_selected_condition)
         self.table_slots.itemSelectionChanged.connect(self._sync_slot_target_from_table_selection)
@@ -2811,6 +2869,7 @@ class MainWindow(QMainWindow):
         self.pipeline_manager.pipeline_changed.connect(self._schedule_refresh_news_watch)
         self.pipeline_manager.pipeline_changed.connect(self._schedule_refresh_operations)
         self.pipeline_manager.pipeline_changed.connect(self._schedule_refresh_policy_logs)
+        self.pipeline_manager.pipeline_changed.connect(self._on_analysis_monitor_pipeline_changed)
         self.right_tabs.currentChanged.connect(self._on_right_tab_changed)
         self.strategy_policy_tabs.currentChanged.connect(self._schedule_refresh_realtime_strategy_reference_labels)
         manager = getattr(self.strategy_manager, "realtime_market_state_manager", None)
@@ -5537,13 +5596,307 @@ class MainWindow(QMainWindow):
             return
         self._finalize_news_watch_refresh()
 
+    def _is_analysis_monitor_tab_active(self):
+        return (
+            hasattr(self, "right_tabs")
+            and getattr(self, "analysis_monitor_tab_widget", None) is not None
+            and self.right_tabs.currentWidget() == self.analysis_monitor_tab_widget
+        )
+
+    def _analysis_monitor_loading_message(self, progress=None, total=None, pending=False):
+        if progress is not None and total is not None:
+            return "실시간 분석 데이터 로딩 중... ({0}/{1})".format(int(progress), int(total))
+        if pending:
+            return "실시간 분석 데이터 준비 중..."
+        return "실시간 분석 데이터 로딩 중..."
+
+    def _set_analysis_monitor_loading(self, visible, message=None):
+        label = getattr(self, "analysis_monitor_loading_label", None)
+        if label is None:
+            return
+        label.setText(str(message or self._analysis_monitor_loading_message()))
+        label.setVisible(bool(visible))
+
+    def _schedule_refresh_analysis_monitor(self, delay_ms=250):
+        self._analysis_monitor_refresh_pending = True
+        if self._analysis_monitor_refresh_running:
+            return
+        if not self._is_analysis_monitor_tab_active():
+            self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message(pending=True))
+            return
+        if self._refresh_analysis_monitor_timer.isActive():
+            return
+        self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message())
+        self._refresh_analysis_monitor_timer.start(max(120, int(delay_ms or 250)))
+
+    def _pause_analysis_monitor_refresh(self):
+        if self._refresh_analysis_monitor_timer.isActive():
+            self._refresh_analysis_monitor_timer.stop()
+        if self._analysis_monitor_refresh_batch_timer.isActive():
+            self._analysis_monitor_refresh_batch_timer.stop()
+        if self._analysis_monitor_refresh_running:
+            self._analysis_monitor_refresh_running = False
+            self._analysis_monitor_refresh_pending = True
+            self.table_analysis_monitor.setUpdatesEnabled(True)
+        self._set_analysis_monitor_loading(False)
+
+    def _fetch_analysis_monitor_rows(self, limit_count=None):
+        limit_count = max(20, int(limit_count or self._analysis_monitor_max_rows or 200))
+        rows = self.persistence.fetchall(
+            """
+            SELECT
+                se.event_id,
+                se.ts,
+                se.code,
+                se.name,
+                se.source_condition_name,
+                se.payload_json,
+                ts.current_state,
+                ts.detected_price
+            FROM symbol_events se
+            LEFT JOIN tracked_symbols ts ON ts.code = se.code
+            WHERE se.event_type = 'condition_enter'
+            ORDER BY se.event_id DESC
+            LIMIT ?
+            """,
+            (limit_count,),
+        )
+        return list(reversed(list(rows or [])))
+
+    def _analysis_monitor_price_value(self, code, fallback_price=0.0):
+        try:
+            snapshot = dict(self.strategy_manager.get_realtime_market_snapshot(code) or {})
+        except Exception:
+            snapshot = {}
+        try:
+            current_price = float(snapshot.get("current_price") or 0.0)
+        except Exception:
+            current_price = 0.0
+        if current_price > 0:
+            return current_price
+        try:
+            return float(fallback_price or 0.0)
+        except Exception:
+            return 0.0
+
+    def _translate_analysis_monitor_result(self, current_state, event_type="condition_enter"):
+        state = str(current_state or "").strip().upper()
+        event_type = str(event_type or "").strip().lower()
+        mapping = {
+            "DETECTED": "포착됨",
+            "BUY_BLOCKED": "분석 후 제외",
+            "BUY_REJECTED": "매수 거부",
+            "BUY_PENDING": "매수 대기",
+            "BUY_SUBMITTED": "매수 주문",
+            "BUY_ORDERED": "매수 주문",
+            "HOLDING": "보유 중",
+            "ARCHIVE_READY": "이탈 감지",
+        }
+        if state in mapping:
+            return mapping.get(state, state)
+        if event_type == "condition_snapshot":
+            return "분석 재확인"
+        return "포착됨"
+
+    def _build_analysis_monitor_row_data(self, raw_row):
+        raw_row = dict(raw_row or {})
+        payload = {}
+        try:
+            payload = json.loads(raw_row.get("payload_json") or "{}")
+        except Exception:
+            payload = {}
+        code = str(raw_row.get("code") or payload.get("code") or "").strip()
+        detected_price = raw_row.get("detected_price") or 0.0
+        current_price = self._analysis_monitor_price_value(code, detected_price)
+        return {
+            "condition_name": str(raw_row.get("source_condition_name") or payload.get("condition_name") or "-"),
+            "name": str(raw_row.get("name") or payload.get("name") or code),
+            "code": code,
+            "current_price": current_price,
+            "result": self._translate_analysis_monitor_result(raw_row.get("current_state"), payload.get("event_type") or "condition_enter"),
+            "captured_at": str(raw_row.get("ts") or ""),
+        }
+
+    def _format_analysis_monitor_time(self, value):
+        text = str(value or "").strip()
+        if not text:
+            return "-"
+        normalized = text.replace("T", " ")
+        for pattern in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y%m%d%H%M%S", "%Y%m%d %H:%M:%S"]:
+            try:
+                parsed = datetime.datetime.strptime(normalized, pattern)
+                return parsed.strftime("%H:%M:%S")
+            except Exception:
+                continue
+        if len(normalized) >= 19:
+            return normalized[11:19]
+        return text
+
+    def _populate_analysis_monitor_row(self, row_index, row_data):
+        table = getattr(self, "table_analysis_monitor", None)
+        if table is None:
+            return
+        row_data = dict(row_data or {})
+        columns = [
+            str(row_data.get("condition_name") or "-"),
+            str(row_data.get("name") or ""),
+            str(row_data.get("code") or ""),
+            "{0:,.0f}".format(float(row_data.get("current_price") or 0.0)) if float(row_data.get("current_price") or 0.0) > 0 else "-",
+            str(row_data.get("result") or "-"),
+            self._format_analysis_monitor_time(row_data.get("captured_at") or ""),
+        ]
+        for col_index, value_text in enumerate(columns):
+            item = table.item(row_index, col_index)
+            if item is None:
+                item = QTableWidgetItem("")
+                if col_index == 3:
+                    item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+                table.setItem(row_index, col_index, item)
+            item.setText(str(value_text))
+            if col_index == 2:
+                item.setData(Qt.UserRole, str(row_data.get("code") or ""))
+
+    def _append_analysis_monitor_row(self, row_data):
+        table = getattr(self, "table_analysis_monitor", None)
+        if table is None:
+            return
+        current_rows = table.rowCount()
+        if current_rows >= int(self._analysis_monitor_max_rows or 200):
+            table.removeRow(0)
+            current_rows -= 1
+        table.insertRow(current_rows)
+        self._populate_analysis_monitor_row(current_rows, row_data)
+        table.scrollToBottom()
+
+    def _refresh_analysis_monitor_visible_rows(self):
+        table = getattr(self, "table_analysis_monitor", None)
+        if table is None:
+            return
+        row_count = table.rowCount()
+        for row_index in range(row_count):
+            code_item = table.item(row_index, 2)
+            if code_item is None:
+                continue
+            code = str(code_item.data(Qt.UserRole) or code_item.text() or "").strip()
+            if not code:
+                continue
+            symbol_row = self.persistence.fetchone(
+                "SELECT current_state, detected_price FROM tracked_symbols WHERE code=?",
+                (code,),
+            )
+            current_state = symbol_row["current_state"] if symbol_row else ""
+            detected_price = symbol_row["detected_price"] if symbol_row else 0.0
+            current_price = self._analysis_monitor_price_value(code, detected_price)
+            price_text = "{0:,.0f}".format(current_price) if current_price > 0 else "-"
+            result_item = table.item(row_index, 4)
+            if result_item is not None:
+                result_item.setText(self._translate_analysis_monitor_result(current_state))
+            price_item = table.item(row_index, 3)
+            if price_item is not None:
+                price_item.setText(price_text)
+
+    def refresh_analysis_monitor(self):
+        if not self._is_analysis_monitor_tab_active():
+            self._analysis_monitor_refresh_pending = True
+            self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message(pending=True))
+            return
+        if self._analysis_monitor_refresh_running:
+            self._analysis_monitor_refresh_pending = True
+            return
+        rows = [self._build_analysis_monitor_row_data(row) for row in self._fetch_analysis_monitor_rows()]
+        self._analysis_monitor_refresh_rows = rows
+        self._analysis_monitor_refresh_index = 0
+        self._analysis_monitor_refresh_pending = False
+        self._analysis_monitor_refresh_running = True
+        self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message(0, len(rows)))
+        self.table_analysis_monitor.setUpdatesEnabled(False)
+        self.table_analysis_monitor.clearContents()
+        self.table_analysis_monitor.setRowCount(len(rows))
+        self._analysis_monitor_refresh_batch_timer.start(0)
+
+    def _finalize_analysis_monitor_refresh(self):
+        self.table_analysis_monitor.setUpdatesEnabled(True)
+        self._analysis_monitor_refresh_running = False
+        if self._analysis_monitor_refresh_pending and self._is_analysis_monitor_tab_active():
+            self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message())
+            QTimer.singleShot(80, lambda: self._schedule_refresh_analysis_monitor(80))
+            return
+        self._set_analysis_monitor_loading(False)
+
+    def _process_analysis_monitor_refresh_batch(self):
+        if not self._analysis_monitor_refresh_running:
+            return
+        if not self._is_analysis_monitor_tab_active():
+            self._pause_analysis_monitor_refresh()
+            return
+        rows = list(self._analysis_monitor_refresh_rows or [])
+        total_count = len(rows)
+        if total_count <= 0:
+            self._finalize_analysis_monitor_refresh()
+            return
+        start_index = int(self._analysis_monitor_refresh_index or 0)
+        end_index = min(start_index + int(self._analysis_monitor_batch_size or 40), total_count)
+        for row_index in range(start_index, end_index):
+            self._populate_analysis_monitor_row(row_index, rows[row_index])
+        self._analysis_monitor_refresh_index = end_index
+        self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message(end_index, total_count))
+        if end_index < total_count:
+            self._analysis_monitor_refresh_batch_timer.start(10)
+            return
+        self._finalize_analysis_monitor_refresh()
+
+    def _on_analysis_monitor_symbol_detected(self, payload):
+        if str((payload or {}).get("event_type") or "") != "condition_enter":
+            return
+        if self._analysis_monitor_refresh_running:
+            self._analysis_monitor_refresh_pending = True
+            return
+        if not self._is_analysis_monitor_tab_active():
+            self._analysis_monitor_refresh_pending = True
+            return
+        symbol_row = self.persistence.fetchone(
+            "SELECT current_state, detected_price FROM tracked_symbols WHERE code=?",
+            (str(payload.get("code") or "").strip(),),
+        )
+        row_data = {
+            "condition_name": str(payload.get("condition_name") or "-"),
+            "name": str(payload.get("name") or payload.get("code") or ""),
+            "code": str(payload.get("code") or ""),
+            "current_price": self._analysis_monitor_price_value(
+                str(payload.get("code") or ""),
+                symbol_row["detected_price"] if symbol_row else 0.0,
+            ),
+            "result": self._translate_analysis_monitor_result(
+                symbol_row["current_state"] if symbol_row else "",
+                payload.get("event_type") or "condition_enter",
+            ),
+            "captured_at": self.persistence.now_ts(),
+        }
+        self._append_analysis_monitor_row(row_data)
+
+    def _on_analysis_monitor_pipeline_changed(self):
+        if self._analysis_monitor_refresh_running:
+            self._analysis_monitor_refresh_pending = True
+            return
+        if not self._is_analysis_monitor_tab_active():
+            self._analysis_monitor_refresh_pending = True
+            return
+        self._refresh_analysis_monitor_visible_rows()
+
     def _on_right_tab_changed(self, index):
         current_widget = self.right_tabs.widget(int(index)) if hasattr(self, "right_tabs") else None
         if current_widget != getattr(self, "news_watch_tab_widget", None):
             self._pause_news_watch_refresh()
+        if current_widget != getattr(self, "analysis_monitor_tab_widget", None):
+            self._pause_analysis_monitor_refresh()
         if current_widget == getattr(self, "realtime_reference_tab_widget", None):
             self._refresh_realtime_reference_table()
             self._schedule_refresh_realtime_strategy_reference_labels(80)
+            return
+        if current_widget == getattr(self, "analysis_monitor_tab_widget", None):
+            if self._analysis_monitor_refresh_pending and not self._refresh_analysis_monitor_timer.isActive():
+                self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message())
+                QTimer.singleShot(40, lambda: self._schedule_refresh_analysis_monitor(120))
             return
         if current_widget == getattr(self, "news_watch_tab_widget", None):
             if self._news_watch_refresh_pending and not self._refresh_news_watch_timer.isActive():
@@ -5552,6 +5905,7 @@ class MainWindow(QMainWindow):
             self._schedule_refresh_realtime_strategy_reference_labels(80)
             return
         self._set_news_watch_loading(False)
+        self._set_analysis_monitor_loading(False)
 
     def refresh_news_watch(self):
         if not self._is_news_watch_tab_active():
