@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import datetime
 import json
 
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -25,11 +26,34 @@ class DartAnalysisManager(QObject):
     def refresh_from_credentials(self):
         self.gpt_service.refresh_from_credentials()
 
-    def analyze_stock(self, name, code, days=180, allow_ai=True):
+    def get_cached_signal(self, code, max_age_minutes=30):
+        if self.persistence is None:
+            return {}
+        code = str(code or "").strip()
+        if not code:
+            return {}
+        row = self.persistence.fetchone(
+            "SELECT * FROM stock_risk_signals WHERE code=?",
+            (code,),
+        )
+        if row is None:
+            return {}
+        updated_at = self._parse_ts(row["updated_at"])
+        if updated_at is None:
+            return {}
+        if (datetime.datetime.now() - updated_at).total_seconds() > max(1, int(max_age_minutes or 30)) * 60:
+            return {}
+        return self._row_to_result(row)
+
+    def analyze_stock(self, name, code, days=180, allow_ai=True, use_cache=True, max_age_minutes=30):
         code = str(code or "").strip()
         name = str(name or "").strip()
         if not code:
             return {}
+        if use_cache:
+            cached = self.get_cached_signal(code, max_age_minutes=max_age_minutes)
+            if cached:
+                return cached
         disclosures = self.api_service.fetch_recent_disclosures(code, days=days)
         risk_disclosures = self.signal_service.filter_risky_financing_disclosures(disclosures)
         signal_result = self.signal_service.score_signals(code, name, risk_disclosures)
@@ -72,3 +96,41 @@ class DartAnalysisManager(QObject):
                 code,
             ),
         )
+
+    def _row_to_result(self, row):
+        extra = {}
+        evidence = []
+        try:
+            extra = json.loads(str(row["extra_json"] or "{}"))
+        except Exception:
+            extra = {}
+        try:
+            evidence = list(json.loads(str(row["evidence_json"] or "[]")))
+        except Exception:
+            evidence = []
+        result = {
+            "code": str(row["code"] or ""),
+            "trade_date": str(row["trade_date"] or ""),
+            "corp_name": str(row["corp_name"] or ""),
+            "mezzanine_flag": int(row["mezzanine_flag"] or 0),
+            "dilution_flag": int(row["dilution_flag"] or 0),
+            "overhang_flag": int(row["overhang_flag"] or 0),
+            "association_flag": int(row["association_flag"] or 0),
+            "control_change_flag": int(row["control_change_flag"] or 0),
+            "warning_level": str(row["warning_level"] or ""),
+            "warning_score": float(row["warning_score"] or 0),
+            "warning_summary": str(row["warning_summary"] or ""),
+            "evidence": evidence,
+        }
+        if isinstance(extra, dict) and extra.get("gpt_analysis"):
+            result["gpt_analysis"] = dict(extra.get("gpt_analysis") or {})
+        return result
+
+    def _parse_ts(self, value):
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None

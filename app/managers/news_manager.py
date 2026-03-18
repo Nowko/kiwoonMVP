@@ -18,19 +18,22 @@ class NaverNewsManager(QObject):
     news_search_completed = pyqtSignal(dict)
     log_emitted = pyqtSignal(str)
 
-    def __init__(self, credential_manager, persistence, telegram_router, kiwoom_client=None, analysis_manager=None, daily_watch_snapshot_manager=None, parent=None):
+    def __init__(self, credential_manager, persistence, telegram_router, kiwoom_client=None, analysis_manager=None, dart_analysis_manager=None, daily_watch_snapshot_manager=None, parent=None):
         super(NaverNewsManager, self).__init__(parent)
         self.credential_manager = credential_manager
         self.persistence = persistence
         self.telegram_router = telegram_router
         self.kiwoom_client = kiwoom_client
         self.analysis_manager = analysis_manager
+        self.dart_analysis_manager = dart_analysis_manager
         self.daily_watch_snapshot_manager = daily_watch_snapshot_manager
         self.theme_resolver = ThemeResolver(
             os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "theme_catalog.json")
         )
         if self.analysis_manager and hasattr(self.analysis_manager, "log_emitted"):
             self.analysis_manager.log_emitted.connect(self.log_emitted.emit)
+        if self.dart_analysis_manager and hasattr(self.dart_analysis_manager, "log_emitted"):
+            self.dart_analysis_manager.log_emitted.connect(self.log_emitted.emit)
         self.timeout = 8
         self._symbol_meta_cache = {}
         self._symbol_meta_cache_live_ttl_sec = 180.0
@@ -909,6 +912,7 @@ class NaverNewsManager(QObject):
         same_minute_counter = {}
         ai_candidate_count = 0
         theme_hint_meta = self._load_symbol_theme_meta(code)
+        dart_signal = self._load_dart_signal(code, name)
         for item in items:
             title = item.get("title", "")
             description = item.get("description", "")
@@ -989,10 +993,52 @@ class NaverNewsManager(QObject):
                         "event_theme_hits": theme_info.get("event_hits", []),
                         "brief_reason": analysis.get("brief_reason", self._build_reason(event_type, direction, final_score)),
                         "risk_note": analysis.get("risk_note", ""),
+                        "dart_signal": dart_signal,
                     }, ensure_ascii=False),
                 }
             )
         return sorted(scored, key=lambda x: x["final_score"], reverse=True)
+
+    def _load_dart_signal(self, code, name):
+        if self.dart_analysis_manager is None:
+            return {}
+        try:
+            cfg = self.credential_manager.get_dart_api(include_key=True)
+        except Exception:
+            cfg = {"enabled": False, "api_key": ""}
+        if (not bool(cfg.get("enabled"))) or (not str(cfg.get("api_key", "") or "").strip()):
+            return {}
+        try:
+            result = self.dart_analysis_manager.analyze_stock(
+                name=name,
+                code=code,
+                days=180,
+                allow_ai=True,
+                use_cache=True,
+                max_age_minutes=30,
+            )
+            if not result:
+                return {}
+            payload = {
+                "warning_level": str(result.get("warning_level", "") or ""),
+                "warning_score": float(result.get("warning_score", 0) or 0),
+                "warning_summary": str(result.get("warning_summary", "") or ""),
+                "evidence": list(result.get("evidence") or []),
+                "mezzanine_flag": int(result.get("mezzanine_flag", 0) or 0),
+                "dilution_flag": int(result.get("dilution_flag", 0) or 0),
+                "overhang_flag": int(result.get("overhang_flag", 0) or 0),
+                "association_flag": int(result.get("association_flag", 0) or 0),
+                "control_change_flag": int(result.get("control_change_flag", 0) or 0),
+            }
+            gpt_result = dict(result.get("gpt_analysis") or {})
+            if gpt_result:
+                payload["gpt_summary"] = str(gpt_result.get("summary", "") or "")
+                payload["gpt_risk_level"] = str(gpt_result.get("risk_level", "") or "")
+                payload["gpt_evidence"] = list(gpt_result.get("evidence") or [])
+            return payload
+        except Exception as exc:
+            self.log_emitted.emit(u"⚠️ DART 징후 분석 실패: {0} / {1}".format(code, exc))
+            return {}
 
     def _load_symbol_theme_meta(self, code):
         row = self.persistence.fetchone(

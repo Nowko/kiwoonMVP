@@ -342,6 +342,7 @@ class TelegramFormatter(object):
             extra.get("novelty_score"),
             extra.get("direction"),
         )
+        dart_signal = dict(extra.get("dart_signal") or {})
         reference_price_value = self._pick_first_positive_number(
             symbol_meta.get("reference_price"),
             symbol_meta.get("detected_price"),
@@ -420,7 +421,38 @@ class TelegramFormatter(object):
                 "<b>주의 사항</b>",
                 "{0}".format(risk_note),
             ])
+        dart_block = self._format_dart_signal_block(dart_signal)
+        if dart_block:
+            rows.extend([
+                "",
+                "<b>DART 징후</b>",
+                dart_block,
+            ])
         return "\n".join(rows)
+
+    def _format_dart_signal_block(self, dart_signal):
+        dart_signal = dict(dart_signal or {})
+        if not dart_signal:
+            return ""
+        warning_level = self._text(
+            self._pick_first(dart_signal.get("gpt_risk_level"), dart_signal.get("warning_level")),
+            default="",
+        )
+        if not warning_level:
+            return ""
+        summary = self._text(
+            self._pick_first(dart_signal.get("gpt_summary"), dart_signal.get("warning_summary")),
+            default="-",
+        )
+        evidence = list(self._pick_first(dart_signal.get("gpt_evidence"), dart_signal.get("evidence")) or [])
+        evidence = [self._text(item, default="") for item in evidence if self._text(item, default="")]
+        lines = [
+            "판정: {0}".format(self._escape(warning_level)),
+            "요약: {0}".format(self._escape(summary)),
+        ]
+        if evidence:
+            lines.append("근거: {0}".format(self._escape(" / ".join(evidence[:3]))))
+        return "\n".join(lines)
 
     def format_trade_buy_candidate(self, payload):
         pricing = dict(payload.get("pricing") or {})

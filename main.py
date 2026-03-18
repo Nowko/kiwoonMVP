@@ -22,6 +22,7 @@ from app.services.trade_control_telegram_formatter import TradeControlTelegramFo
 from app.services.trade_control_action_service import TradeControlActionService
 from app.services.trade_control_telegram_manager import TradeControlTelegramManager
 from app.services.news_analysis_manager import NewsAnalysisManager
+from app.services.dart_analysis_manager import DartAnalysisManager
 from app.services.file_log_manager import FileLogManager
 from app.services.daily_watch_snapshot_manager import DailyWatchSnapshotManager
 from app.managers.recovery_manager import RecoveryManager
@@ -161,14 +162,17 @@ def main():
     position_state_manager = PositionStateManager(persistence, realtime_market_state_manager=realtime_market_state_manager)
     telegram_router = TelegramManager(credential_manager, persistence)
     news_analysis_manager = NewsAnalysisManager(credential_manager=credential_manager)
+    dart_analysis_manager = DartAnalysisManager(paths=paths, persistence=persistence, credential_manager=credential_manager)
     news_manager = NaverNewsManager(
         credential_manager,
         persistence,
         telegram_router,
         kiwoom_client=kiwoom_client,
         analysis_manager=news_analysis_manager,
+        dart_analysis_manager=dart_analysis_manager,
         daily_watch_snapshot_manager=daily_watch_snapshot_manager,
     )
+    dart_analysis_manager.log_emitted.connect(file_log_manager.write_line)
     order_manager = OrderManager(
         persistence,
         kiwoom_client,
