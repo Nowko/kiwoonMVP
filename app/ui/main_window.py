@@ -223,6 +223,10 @@ class MainWindow(QMainWindow):
         self._startup_warmup_timer = QTimer(self)
         self._startup_warmup_timer.setSingleShot(True)
         self._startup_warmup_timer.timeout.connect(self._check_startup_warmup)
+        self._deferred_account_sync_timer = QTimer(self)
+        self._deferred_account_sync_timer.setSingleShot(True)
+        self._deferred_account_sync_timer.timeout.connect(self._run_deferred_account_sync)
+        self._startup_deferred_sync_pending = False
 
         self.setWindowTitle("Kiwoom News Trader MVP")
         self._build_ui()
@@ -3911,6 +3915,7 @@ class MainWindow(QMainWindow):
         if not self._startup_bootstrap_active:
             return
         self._set_startup_step("account_sync", "done", "계좌 동기화를 마쳤고 후속 시작 작업을 정리 중입니다.")
+        self._schedule_deferred_account_sync()
         self._check_startup_warmup()
 
     def _on_execution_mode_changed(self):
@@ -4392,11 +4397,31 @@ class MainWindow(QMainWindow):
         if startup_sync and self._startup_bootstrap_active:
             self._set_startup_step("account_sync", "in_progress", "예수금과 보유내역을 동기화하는 중입니다.")
             self._set_startup_loading_message("계좌 예수금과 보유내역을 동기화하는 중입니다.")
-        ok = self.order_manager.synchronize_all_accounts()
+        if startup_sync:
+            ok = self.order_manager.synchronize_startup_accounts()
+        else:
+            ok = self.order_manager.synchronize_all_accounts()
         if startup_sync and self._startup_bootstrap_active and not ok:
             self._set_startup_step("account_sync", "skipped", "계좌 동기화를 바로 시작하지 못했습니다.")
             self._finish_startup_loading()
         return ok
+
+    def _schedule_deferred_account_sync(self):
+        if self._startup_deferred_sync_pending:
+            return
+        self._startup_deferred_sync_pending = True
+        self._deferred_account_sync_timer.start(12000)
+
+    def _run_deferred_account_sync(self):
+        self._startup_deferred_sync_pending = False
+        try:
+            if self.kiwoom_client.is_account_sync_busy():
+                self._schedule_deferred_account_sync()
+                return
+        except Exception:
+            pass
+        self.append_log("⏳ 시작 후 백그라운드 계좌 동기화를 진행합니다.")
+        self.order_manager.synchronize_active_accounts()
 
     def refresh_condition_catalog(self):
         keyword = self.edt_condition_search.text().strip().lower()

@@ -1236,6 +1236,10 @@ class KiwoomApiClient(QObject):
                     "account_no": account_no,
                     "query_password_mode": str(item.get("query_password_mode", "api_saved") or "api_saved"),
                     "query_password": str(item.get("query_password", "") or ""),
+                    "include_cash": bool(item.get("include_cash", True)),
+                    "include_balance": bool(item.get("include_balance", True)),
+                    "include_realized": bool(item.get("include_realized", True)),
+                    "include_outstanding": bool(item.get("include_outstanding", True)),
                 })
             else:
                 account_no = str(item).strip()
@@ -1244,6 +1248,10 @@ class KiwoomApiClient(QObject):
                         "account_no": account_no,
                         "query_password_mode": "api_saved",
                         "query_password": "",
+                        "include_cash": True,
+                        "include_balance": True,
+                        "include_realized": True,
+                        "include_outstanding": True,
                     })
         if not profiles:
             self.log_emitted.emit("⚠️ 동기화할 활성 계좌가 없습니다")
@@ -1253,35 +1261,43 @@ class KiwoomApiClient(QObject):
             account_no = profile["account_no"]
             password_mode = profile.get("query_password_mode", "api_saved")
             password = profile.get("query_password", "") if password_mode == "program_input" else ""
+            include_cash = bool(profile.get("include_cash", True))
+            include_balance = bool(profile.get("include_balance", True))
+            include_realized = bool(profile.get("include_realized", True))
+            include_outstanding = bool(profile.get("include_outstanding", True))
             if password_mode == "program_input" and not password:
                 self.log_emitted.emit("⚠️ 조회 비밀번호 입력 모드이나 비밀번호가 비어 있습니다: {0}".format(account_no))
-            self._account_sync_queue.append({
-                "type": "cash",
-                "account_no": account_no,
-                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 1),
-                "password_mode": password_mode,
-                "password": password,
-            })
-            self._account_sync_queue.append({
-                "type": "balance",
-                "account_no": account_no,
-                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 2),
-                "password_mode": password_mode,
-                "password": password,
-            })
-            self._account_sync_queue.append({
-                "type": "realized",
-                "account_no": account_no,
-                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 3),
-                "password_mode": password_mode,
-                "password": password,
-            })
-            self._account_sync_queue.append({
-                "type": "outstanding",
-                "account_no": account_no,
-                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 4),
-                "password_mode": password_mode,
-            })
+            if include_cash:
+                self._account_sync_queue.append({
+                    "type": "cash",
+                    "account_no": account_no,
+                    "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 1),
+                    "password_mode": password_mode,
+                    "password": password,
+                })
+            if include_balance:
+                self._account_sync_queue.append({
+                    "type": "balance",
+                    "account_no": account_no,
+                    "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 2),
+                    "password_mode": password_mode,
+                    "password": password,
+                })
+            if include_realized:
+                self._account_sync_queue.append({
+                    "type": "realized",
+                    "account_no": account_no,
+                    "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 3),
+                    "password_mode": password_mode,
+                    "password": password,
+                })
+            if include_outstanding:
+                self._account_sync_queue.append({
+                    "type": "outstanding",
+                    "account_no": account_no,
+                    "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 4),
+                    "password_mode": password_mode,
+                })
         self._current_sync_context = None
         self.log_emitted.emit("🔄 계좌 동기화 큐 시작: {0}개 계좌".format(len(profiles)))
         QTimer.singleShot(0, self._dispatch_next_sync_request)

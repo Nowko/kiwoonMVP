@@ -1027,6 +1027,28 @@ class OrderManager(QObject):
         self.log_emitted.emit("🔄 활성 계좌 동기화 요청: {0}".format(", ".join(mode_text)))
         return self.kiwoom_client.request_account_sync(profiles)
 
+    def synchronize_startup_accounts(self):
+        profiles = self._build_account_sync_profiles(include_all=False)
+        account_numbers = [row["account_no"] for row in profiles if row.get("account_no")]
+        if not account_numbers:
+            self.log_emitted.emit("⚠️ 활성 계좌가 없어 시작 동기화를 수행하지 않습니다")
+            return False
+        if not getattr(self.kiwoom_client, "connected", False):
+            self.log_emitted.emit("⚠️ 키움 미연결 상태라 시작 계좌 동기화를 생략합니다")
+            return False
+        startup_profiles = []
+        mode_text = []
+        for row in profiles:
+            profile = dict(row)
+            profile["include_cash"] = True
+            profile["include_balance"] = True
+            profile["include_realized"] = False
+            profile["include_outstanding"] = False
+            startup_profiles.append(profile)
+            mode_text.append("{0}:startup_light".format(profile["account_no"]))
+        self.log_emitted.emit("⚡ 시작 경량 계좌 동기화 요청: {0}".format(", ".join(mode_text)))
+        return self.kiwoom_client.request_account_sync(startup_profiles)
+
     def synchronize_all_accounts(self):
         profiles = self._build_account_sync_profiles(include_all=True)
         account_numbers = [row["account_no"] for row in profiles if row.get("account_no")]
