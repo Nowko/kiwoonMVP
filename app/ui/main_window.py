@@ -2680,8 +2680,13 @@ class MainWindow(QMainWindow):
     def _build_operations_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        self.table_accounts_summary = QTableWidget(0, 6)
-        self.table_accounts_summary.setHorizontalHeaderLabels(["계좌", "예수금", "주문 가능 현금", "보유종목 수", "총 평가손익", "총 실현손익"])
+        top_row = QHBoxLayout()
+        top_row.addStretch(1)
+        self.btn_operations_refresh = QPushButton("재조회")
+        top_row.addWidget(self.btn_operations_refresh)
+        layout.addLayout(top_row)
+        self.table_accounts_summary = QTableWidget(0, 8)
+        self.table_accounts_summary.setHorizontalHeaderLabels(["계좌", "예수금", "주문 가능 현금", "보유종목 수", "총매입", "총평가", "총 평가손익", "총 실현손익"])
         self.table_accounts_summary.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_accounts_summary.setEditTriggers(QAbstractItemView.NoEditTriggers)
         layout.addWidget(self.table_accounts_summary)
@@ -2878,6 +2883,7 @@ class MainWindow(QMainWindow):
         self.btn_recheck_news.clicked.connect(self._recheck_selected_news_symbol)
         self.btn_mark_spam.clicked.connect(self._spam_selected_symbol)
         self.btn_unspam.clicked.connect(self._unspam_selected_symbol)
+        self.btn_operations_refresh.clicked.connect(self._sync_active_accounts)
         self.cbo_daily_review_date.currentIndexChanged.connect(self.refresh_daily_review_view)
         self.btn_manual_sell_position.clicked.connect(self._manual_sell_selected_position)
         self.btn_manual_cancel_open_order.clicked.connect(self._manual_cancel_selected_open_order)
@@ -5205,8 +5211,22 @@ class MainWindow(QMainWindow):
             account_no = str(state.get("account_no") or "")
             if not account_no:
                 continue
-            info = summary_map.setdefault(account_no, {"holding_count": 0, "eval_profit_total": 0.0})
+            info = summary_map.setdefault(account_no, {"holding_count": 0, "total_buy": 0.0, "total_eval": 0.0, "eval_profit_total": 0.0})
             info["holding_count"] += 1
+            try:
+                qty = int(state.get("qty") or 0)
+            except Exception:
+                qty = 0
+            try:
+                avg_price = float(state.get("avg_price") or 0.0)
+            except Exception:
+                avg_price = 0.0
+            try:
+                current_price = float(state.get("current_price") or 0.0)
+            except Exception:
+                current_price = 0.0
+            info["total_buy"] += avg_price * qty
+            info["total_eval"] += current_price * qty
             try:
                 info["eval_profit_total"] += float(state.get("eval_profit") or 0)
             except Exception:
@@ -5357,6 +5377,8 @@ class MainWindow(QMainWindow):
             api_deposit_cash = float(account_cash.get("deposit_cash", 0.0) or 0.0)
             api_orderable_cash = float(account_cash.get("orderable_cash", 0.0) or 0.0)
             holding_count = int(live_summary.get("holding_count", row["holding_count"] or 0) or 0)
+            total_buy = float(live_summary.get("total_buy", 0.0) or 0.0)
+            total_eval = float(live_summary.get("total_eval", 0.0) or 0.0)
             eval_profit_total = float(live_summary.get("eval_profit_total", row["eval_profit_total"] or 0) or 0)
             realized_profit_total = float(row["realized_profit_total"] or 0)
             self.table_accounts_summary.setItem(
@@ -5367,8 +5389,10 @@ class MainWindow(QMainWindow):
             self.table_accounts_summary.setItem(row_index, 1, self._make_number_item(api_deposit_cash))
             self.table_accounts_summary.setItem(row_index, 2, self._make_number_item(api_orderable_cash))
             self.table_accounts_summary.setItem(row_index, 3, self._make_number_item(holding_count))
-            self.table_accounts_summary.setItem(row_index, 4, self._make_number_item(eval_profit_total, signed=True))
-            self.table_accounts_summary.setItem(row_index, 5, self._make_number_item(realized_profit_total, signed=True))
+            self.table_accounts_summary.setItem(row_index, 4, self._make_number_item(total_buy))
+            self.table_accounts_summary.setItem(row_index, 5, self._make_number_item(total_eval))
+            self.table_accounts_summary.setItem(row_index, 6, self._make_number_item(eval_profit_total, signed=True))
+            self.table_accounts_summary.setItem(row_index, 7, self._make_number_item(realized_profit_total, signed=True))
 
         self.table_positions.setSortingEnabled(False)
         self.table_positions.setRowCount(len(position_states))
