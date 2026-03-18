@@ -5031,6 +5031,25 @@ class MainWindow(QMainWindow):
         self.table_daily_review_summary.setEnabled(True)
         self.table_daily_review_items.setEnabled(True)
 
+        if trade_date == self.persistence.today_str() and summary_rows:
+            account_settings_map = {}
+            for account_row in self.account_manager.get_accounts():
+                account_no = str(account_row.get("account_no") or "")
+                if not account_no:
+                    continue
+                settings = dict(account_row.get("settings") or {})
+                account_settings_map[account_no] = float(settings.get("api_realized_profit", 0.0) or 0.0)
+            patched_rows = []
+            for row in summary_rows:
+                patched = dict(row)
+                account_no = str(patched.get("account_no") or "")
+                live_realized = float(account_settings_map.get(account_no, 0.0) or 0.0)
+                if live_realized != 0:
+                    patched["realized_profit_total"] = live_realized
+                    patched["total_pnl"] = float(patched.get("holding_eval_total") or 0.0) + live_realized
+                patched_rows.append(patched)
+            summary_rows = patched_rows
+
         display_summary_rows = list(summary_rows)
         if summary_rows:
             display_summary_rows.append(
