@@ -1520,28 +1520,36 @@ class KiwoomApiClient(QObject):
         deposit_cash = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["예수금", "추정예수금", "D+2추정예수금"]))
         orderable_cash = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["주문가능금액", "주문가능현금", "출금가능금액"]))
         estimated_assets = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["추정예탁자산", "총평가금액", "총자산", "예탁자산평가액"]))
+        api_total_buy = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총매입금액", "총매입", "매입금액합계"]))
         api_total_eval = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가금액", "총자산", "예탁자산평가액", "추정예탁자산"]))
         api_total_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가손익금액", "총손익금액", "총평가손익", "평가손익합계"]))
+        api_realized_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["실현손익", "실현손익금액", "당일실현손익"]))
         return {
             "deposit_cash": deposit_cash,
             "orderable_cash": orderable_cash,
             "estimated_assets": estimated_assets,
+            "api_total_buy": api_total_buy,
             "api_total_eval": api_total_eval,
             "api_total_profit": api_total_profit,
+            "api_realized_profit": api_realized_profit,
         }
 
     def _parse_balance_summary(self, tr_code, rq_name):
         deposit_cash = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["예수금", "추정예수금", "D+2추정예수금"]))
         orderable_cash = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["주문가능금액", "출금가능금액", "주문가능현금"]))
         estimated_assets = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["추정예탁자산", "총평가금액", "총자산", "예탁자산평가액"]))
+        api_total_buy = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총매입금액", "총매입", "매입금액합계"]))
         api_total_eval = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가금액", "총자산", "예탁자산평가액", "추정예탁자산"]))
         api_total_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가손익금액", "총손익금액", "총평가손익", "평가손익합계"]))
+        api_realized_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["실현손익", "실현손익금액", "당일실현손익"]))
         return {
             "deposit_cash": deposit_cash,
             "orderable_cash": orderable_cash,
             "estimated_assets": estimated_assets,
+            "api_total_buy": api_total_buy,
             "api_total_eval": api_total_eval,
             "api_total_profit": api_total_profit,
+            "api_realized_profit": api_realized_profit,
         }
 
     def _parse_balance_rows(self, tr_code, rq_name):

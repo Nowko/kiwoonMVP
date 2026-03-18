@@ -2711,7 +2711,7 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self.btn_operations_refresh)
         layout.addLayout(top_row)
         self.table_accounts_summary = QTableWidget(0, 8)
-        self.table_accounts_summary.setHorizontalHeaderLabels(["계좌", "예수금", "주문 가능 현금", "보유종목 수", "총매입", "총평가", "총평가금액", "총손익"])
+        self.table_accounts_summary.setHorizontalHeaderLabels(["계좌", "예수금", "주문 가능 현금", "보유종목 수", "총매입", "총평가", "총손익", "실현손익"])
         self.table_accounts_summary.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_accounts_summary.setEditTriggers(QAbstractItemView.NoEditTriggers)
         layout.addWidget(self.table_accounts_summary)
@@ -5399,8 +5399,10 @@ class MainWindow(QMainWindow):
             account_settings_map[account_no] = {
                 "deposit_cash": float(settings.get("deposit_cash", 0.0) or 0.0),
                 "orderable_cash": float(settings.get("orderable_cash", 0.0) or 0.0),
+                "api_total_buy": float(settings.get("api_total_buy", 0.0) or 0.0),
                 "api_total_eval": float(settings.get("api_total_eval", 0.0) or 0.0),
                 "api_total_profit": float(settings.get("api_total_profit", 0.0) or 0.0),
+                "api_realized_profit": float(settings.get("api_realized_profit", 0.0) or 0.0),
             }
         self.table_accounts_summary.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
@@ -5409,13 +5411,15 @@ class MainWindow(QMainWindow):
             account_cash = dict(account_settings_map.get(account_no) or {})
             api_deposit_cash = float(account_cash.get("deposit_cash", 0.0) or 0.0)
             api_orderable_cash = float(account_cash.get("orderable_cash", 0.0) or 0.0)
+            api_total_buy = float(account_cash.get("api_total_buy", 0.0) or 0.0)
             api_total_eval = float(account_cash.get("api_total_eval", 0.0) or 0.0)
             api_total_profit = float(account_cash.get("api_total_profit", 0.0) or 0.0)
+            api_realized_profit = float(account_cash.get("api_realized_profit", 0.0) or 0.0)
             holding_count = int(live_summary.get("holding_count", row["holding_count"] or 0) or 0)
-            total_buy = float(live_summary.get("total_buy", 0.0) or 0.0)
-            total_eval = float(live_summary.get("total_eval", 0.0) or 0.0)
-            eval_profit_total = api_total_eval if api_total_eval > 0 else total_eval
-            realized_profit_total = api_total_profit if api_total_profit != 0 else float(row["eval_profit_total"] or 0)
+            total_buy = api_total_buy if api_total_buy > 0 else float(live_summary.get("total_buy", 0.0) or 0.0)
+            total_eval = api_total_eval if api_total_eval > 0 else float(live_summary.get("total_eval", 0.0) or 0.0)
+            total_profit = api_total_profit if api_total_profit != 0 else float(row["eval_profit_total"] or 0)
+            realized_profit_total = api_realized_profit if api_realized_profit != 0 else float(row["realized_profit_total"] or 0)
             self.table_accounts_summary.setItem(
                 row_index,
                 0,
@@ -5426,7 +5430,7 @@ class MainWindow(QMainWindow):
             self.table_accounts_summary.setItem(row_index, 3, self._make_number_item(holding_count))
             self.table_accounts_summary.setItem(row_index, 4, self._make_number_item(total_buy))
             self.table_accounts_summary.setItem(row_index, 5, self._make_number_item(total_eval))
-            self.table_accounts_summary.setItem(row_index, 6, self._make_number_item(eval_profit_total, signed=True))
+            self.table_accounts_summary.setItem(row_index, 6, self._make_number_item(total_profit, signed=True))
             self.table_accounts_summary.setItem(row_index, 7, self._make_number_item(realized_profit_total, signed=True))
 
         self.table_positions.setSortingEnabled(False)
