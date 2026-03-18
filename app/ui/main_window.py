@@ -1438,7 +1438,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.lbl_policy_logs_empty)
         self.lbl_news_watch_loading = QLabel("뉴스감시 데이터 로딩 중...")
         self.lbl_news_watch_loading.setStyleSheet("color: #8a5a00; font-weight: 700; background: #fff4d6; padding: 6px 8px; border: 1px solid #f2d28b;")
-        self.lbl_news_watch_loading.setVisible(False)
+        self.lbl_news_watch_loading.setMinimumHeight(self.lbl_news_watch_loading.sizeHint().height())
+        self.lbl_news_watch_loading.setText("")
+        self.lbl_news_watch_loading.setVisible(True)
         layout.addWidget(self.lbl_news_watch_loading)
         self.table_policy_logs = QTableWidget(0, 8)
         self.table_policy_logs.setHorizontalHeaderLabels(["시각", "계좌", "종목명", "코드", "정책", "단계", "액션", "상세"])
@@ -2792,7 +2794,9 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         self.news_watch_loading_label_actual = QLabel("뉴스감시 데이터 로딩 중...")
         self.news_watch_loading_label_actual.setStyleSheet("color: #8a5a00; font-weight: 700; background: #fff4d6; padding: 6px 8px; border: 1px solid #f2d28b;")
-        self.news_watch_loading_label_actual.setVisible(False)
+        self.news_watch_loading_label_actual.setMinimumHeight(self.news_watch_loading_label_actual.sizeHint().height())
+        self.news_watch_loading_label_actual.setText("")
+        self.news_watch_loading_label_actual.setVisible(True)
         layout.addWidget(self.news_watch_loading_label_actual)
         self.lbl_news_watch_live_reference = QLabel("실시간 참고값 : 뉴스감시에서 종목을 선택하세요")
         self.lbl_news_watch_live_reference.setWordWrap(True)
@@ -5744,8 +5748,8 @@ class MainWindow(QMainWindow):
         )
         if label is None:
             return
-        label.setText(str(message or self._news_watch_loading_message()))
-        label.setVisible(bool(visible))
+        label.setText(str(message or self._news_watch_loading_message()) if visible else "")
+        label.setVisible(True)
 
     def _schedule_refresh_news_watch(self, delay_ms=400):
         self._news_watch_refresh_pending = True
