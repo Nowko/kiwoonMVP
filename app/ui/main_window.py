@@ -850,7 +850,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(assign_row)
 
         self.table_slots = QTableWidget(10, 6)
-        self.table_slots.setHorizontalHeaderLabels(["슬롯", "조건식", "활성", "실시간", "편입수", "마지막 이벤트"])
+        self.table_slots.setHorizontalHeaderLabels(["슬롯", "조건식", "활성(사용)", "실시간(API)", "편입수", "마지막 이벤트"])
         header = self.table_slots.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
@@ -4405,8 +4405,12 @@ class MainWindow(QMainWindow):
         for row_index, row in enumerate(rows):
             self.table_slots.setItem(row_index, 0, QTableWidgetItem(str(row["slot_no"])))
             self.table_slots.setItem(row_index, 1, QTableWidgetItem(row["condition_name"] or ""))
-            self.table_slots.setItem(row_index, 2, QTableWidgetItem("Y" if int(row["is_enabled"] or 0) else "N"))
-            self.table_slots.setItem(row_index, 3, QTableWidgetItem("Y" if int(row["is_realtime"] or 0) else "N"))
+            active_item = QTableWidgetItem("Y" if int(row["is_enabled"] or 0) else "N")
+            active_item.setToolTip("조건식을 사용 설정한 상태" if int(row["is_enabled"] or 0) else "조건식을 사용하지 않는 상태")
+            realtime_item = QTableWidgetItem("Y" if int(row["is_realtime"] or 0) else "N")
+            realtime_item.setToolTip("키움 API 실시간 등록 성공" if int(row["is_realtime"] or 0) else "키움 API 실시간 미등록 또는 등록 실패")
+            self.table_slots.setItem(row_index, 2, active_item)
+            self.table_slots.setItem(row_index, 3, realtime_item)
             self.table_slots.setItem(row_index, 4, QTableWidgetItem(str(row["current_count"] or 0)))
             self.table_slots.setItem(row_index, 5, QTableWidgetItem(row["last_event_at"] or ""))
 

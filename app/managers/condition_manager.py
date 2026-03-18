@@ -122,6 +122,14 @@ class ConditionCatalogManager(QObject):
         )
         self.slots_changed.emit()
 
+    def set_slot_realtime_status(self, slot_no, realtime):
+        now = self.persistence.now_ts()
+        self.persistence.execute(
+            "UPDATE active_condition_slots SET is_realtime=?, updated_at=? WHERE slot_no=?",
+            (1 if realtime else 0, now, int(slot_no)),
+        )
+        self.slots_changed.emit()
+
     def start_realtime_slot(self, slot_no):
         row = self.persistence.fetchone(
             """
@@ -139,6 +147,8 @@ class ConditionCatalogManager(QObject):
         ok = self.kiwoom_client.send_condition(screen_no, row["condition_name"], row["condition_index"], 1)
         if ok:
             self.set_slot_enabled(slot_no, True, True)
+        else:
+            self.set_slot_realtime_status(slot_no, False)
         return ok
 
     def stop_realtime_slot(self, slot_no):
@@ -156,7 +166,7 @@ class ConditionCatalogManager(QObject):
         screen_no = "51{0:02d}".format(int(slot_no))
         ok = self.kiwoom_client.stop_condition(screen_no, row["condition_name"], row["condition_index"])
         if ok:
-            self.set_slot_enabled(slot_no, False, False)
+            self.set_slot_realtime_status(slot_no, False)
         return ok
 
     def export_slot_profile(self):
@@ -225,7 +235,7 @@ class ConditionCatalogManager(QObject):
                 continue
             self.persistence.execute(
                 "UPDATE active_condition_slots SET condition_id=?, is_enabled=?, is_realtime=?, current_count=0, last_event_at=NULL, updated_at=? WHERE slot_no=?",
-                (catalog_row["condition_id"], 1 if int(item.get("is_enabled", 0) or 0) else 0, 1 if int(item.get("is_realtime", 0) or 0) else 0, now, slot_no),
+                (catalog_row["condition_id"], 1 if int(item.get("is_enabled", 0) or 0) else 0, 0, now, slot_no),
             )
             if int(item.get("is_realtime", 0) or 0):
                 restore_realtime.append(slot_no)
