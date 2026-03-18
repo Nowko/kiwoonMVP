@@ -247,8 +247,6 @@ class TelegramFormatter(object):
             notes.append("이미 알려진 재료일 수 있어 추격 매수는 주의가 필요합니다.")
         if direction == "bearish":
             notes.append("악재 해석 가능성이 있어 변동성이 커질 수 있습니다.")
-        if not notes:
-            notes.append("선반영 여부를 함께 확인하는 것이 좋습니다.")
         return "\n".join(notes)
 
     def format_lines(self, title, lines):
