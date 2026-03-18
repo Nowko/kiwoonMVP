@@ -3,12 +3,13 @@ import json
 
 
 class TradeControlActionService(object):
-    def __init__(self, persistence, account_manager, order_manager, condition_manager, strategy_manager, main_window=None):
+    def __init__(self, persistence, account_manager, order_manager, condition_manager, strategy_manager, credential_manager=None, main_window=None):
         self.persistence = persistence
         self.account_manager = account_manager
         self.order_manager = order_manager
         self.condition_manager = condition_manager
         self.strategy_manager = strategy_manager
+        self.credential_manager = credential_manager
         self.main_window = main_window
 
     def set_main_window(self, main_window):
@@ -44,6 +45,57 @@ class TradeControlActionService(object):
             self.main_window.resume_enabled_condition_realtime()
         result["message"] = "정지를 해제했습니다."
         return result
+
+    def get_news_settings(self):
+        send_score = 60
+        if self.credential_manager is not None:
+            send_score = int(self.credential_manager.get_news_send_min_score() or 60)
+        default_policy = self.strategy_manager.get_default_strategy_policy()
+        trade_policy = self.strategy_manager.get_news_trade_policy()
+        return {
+            "news_send_min_score": max(0, min(100, int(send_score or 0))),
+            "news_filter_min_score": max(0, min(100, int(default_policy.get("news_min_score") or 0))),
+            "news_trade_min_score": max(0, min(100, int(trade_policy.get("min_score") or 0))),
+        }
+
+    def set_news_send_min_score(self, value):
+        score = max(0, min(100, int(value or 0)))
+        if self.credential_manager is None:
+            return {"ok": False, "message": "뉴스 발송 점수를 저장할 수 없습니다."}
+        self.credential_manager.set_news_send_min_score(score)
+        return {"ok": True, "message": "뉴스 발송 점수를 {0}점으로 변경했습니다.".format(score)}
+
+    def set_news_filter_min_score(self, value):
+        score = max(0, min(100, int(value or 0)))
+        default_policy = self.strategy_manager.get_default_strategy_policy()
+        try:
+            buy_expression_items = json.loads(default_policy.get("buy_expression_json") or "[]")
+        except Exception:
+            buy_expression_items = []
+        try:
+            sell_strategy_nos = json.loads(default_policy.get("sell_strategy_nos_json") or "[]")
+        except Exception:
+            sell_strategy_nos = []
+        self.strategy_manager.save_default_strategy_policy(
+            buy_expression_items,
+            sell_strategy_nos,
+            score,
+        )
+        return {"ok": True, "message": "뉴스 필터 점수를 {0}점으로 변경했습니다.".format(score)}
+
+    def set_news_trade_min_score(self, value):
+        score = max(0, min(100, int(value or 0)))
+        trade_policy = self.strategy_manager.get_news_trade_policy()
+        try:
+            sell_strategy_nos = json.loads(trade_policy.get("sell_strategy_nos_json") or "[]")
+        except Exception:
+            sell_strategy_nos = []
+        self.strategy_manager.save_news_trade_policy(
+            bool(int(trade_policy.get("enabled") or 0)),
+            score,
+            sell_strategy_nos,
+        )
+        return {"ok": True, "message": "뉴스 매매 점수를 {0}점으로 변경했습니다.".format(score)}
 
     def get_account_summaries(self):
         rows = []
@@ -254,10 +306,7 @@ class TradeControlActionService(object):
             sell_strategy_nos,
             resolved.get("news_min_score") or 0,
         )
-        return {
-            "ok": True,
-            "message": "슬롯 {0}의 매수전략을 [{1}]로 변경했습니다.".format(slot_no, strategy_no),
-        }
+        return {"ok": True, "message": "슬롯 {0}의 매수전략을 [{1}]로 변경했습니다.".format(slot_no, strategy_no)}
 
     def toggle_slot_sell_strategy(self, slot_no, strategy_no):
         slot_no = int(slot_no or 0)
@@ -283,10 +332,7 @@ class TradeControlActionService(object):
             sell_strategy_nos,
             resolved.get("news_min_score") or 0,
         )
-        return {
-            "ok": True,
-            "message": "슬롯 {0}의 매도전략에 [{1}]를 {2}했습니다.".format(slot_no, strategy_no, action_text),
-        }
+        return {"ok": True, "message": "슬롯 {0}의 매도전략에 [{1}]를 {2}했습니다.".format(slot_no, strategy_no, action_text)}
 
     def get_open_orders(self, account_no):
         account_no = str(account_no or "").strip()
@@ -359,10 +405,7 @@ class TradeControlActionService(object):
                 self.condition_manager.stop_realtime_slot(slot_no)
             except Exception:
                 pass
-        return {
-            "ok": True,
-            "message": "슬롯 {0}을 {1}했습니다.".format(slot_no, "활성" if enabled else "비활성"),
-        }
+        return {"ok": True, "message": "슬롯 {0}을 {1}했습니다.".format(slot_no, "활성" if enabled else "비활성")}
 
     def restart_condition_slot(self, slot_no):
         slot_no = int(slot_no or 0)
@@ -404,6 +447,12 @@ class TradeControlActionService(object):
             return self.set_slot_buy_strategy(parts[0], parts[1])
         if action == "cond_sell_toggle" and len(parts) >= 2:
             return self.toggle_slot_sell_strategy(parts[0], parts[1])
+        if action == "news_send" and len(parts) >= 1:
+            return self.set_news_send_min_score(parts[0])
+        if action == "news_filter" and len(parts) >= 1:
+            return self.set_news_filter_min_score(parts[0])
+        if action == "news_trade" and len(parts) >= 1:
+            return self.set_news_trade_min_score(parts[0])
         return {"ok": False, "message": "지원하지 않는 요청입니다."}
 
     def _fmt_num(self, value, signed=False):

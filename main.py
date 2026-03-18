@@ -186,6 +186,7 @@ def main():
         order_manager=order_manager,
         condition_manager=condition_manager,
         strategy_manager=strategy_manager,
+        credential_manager=credential_manager,
     )
     trade_control_telegram_manager = TradeControlTelegramManager(
         credential_manager=credential_manager,

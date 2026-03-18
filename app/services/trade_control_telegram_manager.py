@@ -109,6 +109,8 @@ class TradeControlTelegramManager(QObject):
             return self._show_open_orders(bot_token, user_id, chat_id, self._resolve_selected_account(user_id, chat_id))
         if command == "/conditions":
             return self._show_conditions(bot_token, user_id, chat_id)
+        if command == "/news":
+            return self._show_news_menu(bot_token, user_id, chat_id)
         if command == "/trade":
             return self._show_trade_control(bot_token, user_id, chat_id)
         if command == "/panic":
@@ -154,6 +156,14 @@ class TradeControlTelegramManager(QObject):
             return self._show_condition_buy_menu(bot_token, user_id, chat_id, parts[2], message_id)
         if area == "cond" and action == "sell_menu" and len(parts) >= 3:
             return self._show_condition_sell_menu(bot_token, user_id, chat_id, parts[2], message_id)
+        if area == "news" and action == "menu":
+            return self._show_news_menu(bot_token, user_id, chat_id, message_id)
+        if area == "news" and action == "send_menu":
+            return self._show_news_score_menu(bot_token, user_id, chat_id, "send", message_id)
+        if area == "news" and action == "filter_menu":
+            return self._show_news_score_menu(bot_token, user_id, chat_id, "filter", message_id)
+        if area == "news" and action == "trade_menu":
+            return self._show_news_score_menu(bot_token, user_id, chat_id, "trade", message_id)
         if area == "trade" and action == "status":
             return self._show_trade_control(bot_token, user_id, chat_id, message_id)
         if area == "panic" and action == "menu":
@@ -239,6 +249,21 @@ class TradeControlTelegramManager(QObject):
         text, buttons = self.formatter.build_condition_sell_menu(slot_row, self.action_service.get_assignable_strategies("sell"))
         return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
 
+    def _show_news_menu(self, bot_token, user_id, chat_id, message_id=None):
+        self.session_store.set_current_menu(user_id, chat_id, "news_menu")
+        text, buttons = self.formatter.build_news_menu(self.action_service.get_news_settings())
+        return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+
+    def _show_news_score_menu(self, bot_token, user_id, chat_id, score_type, message_id=None):
+        settings = self.action_service.get_news_settings()
+        key_map = {
+            "send": "news_send_min_score",
+            "filter": "news_filter_min_score",
+            "trade": "news_trade_min_score",
+        }
+        text, buttons = self.formatter.build_news_score_menu(score_type, settings.get(key_map.get(score_type, ""), 0))
+        return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+
     def _show_trade_control(self, bot_token, user_id, chat_id, message_id=None):
         text, buttons = self.formatter.build_trade_control(self.action_service.get_trade_enabled())
         return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
@@ -317,6 +342,25 @@ class TradeControlTelegramManager(QObject):
                 "슬롯 {0}의 매도전략 [{1}]를 추가 또는 제거하시겠습니까?".format(slot_no, strategy_no),
                 "tc|exec|cond_sell_toggle|{0}|{1}".format(slot_no, strategy_no),
                 "tc|cond|sell_menu|{0}".format(slot_no),
+            )
+            return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+        if action in ["news_send", "news_filter", "news_trade"] and len(parts) >= 1:
+            score = str(parts[0] or "")
+            title_map = {
+                "news_send": "뉴스 발송 점수",
+                "news_filter": "뉴스 필터 점수",
+                "news_trade": "뉴스 매매 점수",
+            }
+            menu_map = {
+                "news_send": "send",
+                "news_filter": "filter",
+                "news_trade": "trade",
+            }
+            text, buttons = self.formatter.build_confirm(
+                title_map.get(action, "뉴스 점수"),
+                "{0}를 {1}점으로 변경하시겠습니까?".format(title_map.get(action, "뉴스 점수"), score),
+                "tc|exec|{0}|{1}".format(action, score),
+                "tc|news|{0}_menu".format(menu_map.get(action, "menu")),
             )
             return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
         return False

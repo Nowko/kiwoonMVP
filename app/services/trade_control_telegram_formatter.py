@@ -27,7 +27,7 @@ class TradeControlTelegramFormatter(object):
         return text, self._markup([
             [self._btn("운영 현황", "tc|menu|status"), self._btn("계좌 선택", "tc|acct|list")],
             [self._btn("보유 종목", "tc|hold|list|{0}".format(selected_account_no or "")), self._btn("조건식 관리", "tc|cond|list")],
-            [self._btn("미체결 관리", "tc|open|list|{0}".format(selected_account_no or ""))],
+            [self._btn("미체결 관리", "tc|open|list|{0}".format(selected_account_no or "")), self._btn("뉴스관리", "tc|news|menu")],
             [self._btn("자동매매 제어", "tc|trade|status"), self._btn("긴급 정지", "tc|panic|menu")],
         ])
 
@@ -57,6 +57,7 @@ class TradeControlTelegramFormatter(object):
         return text, self._markup([
             [self._btn("전체 계좌 보기", "tc|acct|list"), self._btn("보유 종목", "tc|hold|list|{0}".format(summary.get("selected_account_no") or ""))],
             [self._btn("미체결 보기", "tc|open|list|{0}".format(summary.get("selected_account_no") or "")), self._btn("조건식 관리", "tc|cond|list")],
+            [self._btn("뉴스관리", "tc|news|menu")],
             [self._btn("자동매매 제어", "tc|trade|status"), self._btn("메인 메뉴", "tc|menu|home")],
         ])
 
@@ -285,6 +286,44 @@ class TradeControlTelegramFormatter(object):
             buttons.append([self._btn(label, "tc|confirm|cond_sell_toggle|{0}|{1}".format(slot_row.get("slot_no") or 0, strategy_no))])
         buttons.append([self._btn("뒤로", "tc|cond|detail|{0}".format(slot_row.get("slot_no") or 0))])
         return "\n".join(lines), self._markup(buttons)
+
+    def build_news_menu(self, settings):
+        text = (
+            "[뉴스관리]\n\n"
+            "뉴스 발송 점수: {news_send_min_score}\n"
+            "뉴스 필터 점수: {news_filter_min_score}\n"
+            "뉴스 매매 점수: {news_trade_min_score}\n\n"
+            "변경할 항목을 선택하세요."
+        ).format(**settings)
+        return text, self._markup([
+            [self._btn("뉴스 발송 점수", "tc|news|send_menu"), self._btn("뉴스 필터 점수", "tc|news|filter_menu")],
+            [self._btn("뉴스 매매 점수", "tc|news|trade_menu")],
+            [self._btn("메인 메뉴", "tc|menu|home")],
+        ])
+
+    def build_news_score_menu(self, score_type, current_score):
+        title_map = {
+            "send": "뉴스 발송 점수",
+            "filter": "뉴스 필터 점수",
+            "trade": "뉴스 매매 점수",
+        }
+        text = (
+            "[{0}]\n\n"
+            "현재 점수: {1}\n\n"
+            "원하는 점수를 선택하세요."
+        ).format(title_map.get(score_type, "뉴스 점수"), int(current_score or 0))
+        values = [40, 50, 60, 70, 75, 80, 85, 90]
+        buttons = []
+        row = []
+        for index, value in enumerate(values, 1):
+            row.append(self._btn("{0}".format(value), "tc|confirm|news_{0}|{1}".format(score_type, value)))
+            if index % 4 == 0:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([self._btn("뒤로", "tc|news|menu"), self._btn("메인 메뉴", "tc|menu|home")])
+        return text, self._markup(buttons)
 
     def build_confirm(self, title, body, confirm_callback, cancel_callback="tc|menu|home"):
         return "[확인]\n\n{0}\n\n{1}".format(title, body), self._markup([
