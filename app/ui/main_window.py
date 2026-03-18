@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QRadioButton,
+    QSizePolicy,
     QSplitter,
     QSpinBox,
     QTabWidget,
@@ -589,6 +590,23 @@ class MainWindow(QMainWindow):
                 label.setText("뉴스감시 데이터 로딩 중...")
 
     def _build_header_widget(self):
+        tabs = QTabWidget(self)
+        page_specs = [
+            (self._build_kiwoom_group(), "?ㅼ?/怨꾩쥖"),
+            (self._build_naver_group(), "?ㅼ씠踰??댁뒪 API"),
+            (self._build_dart_group(), "DART API"),
+            (self._build_telegram_group("?댁뒪 ?붾젅洹몃옩", "news"), "?댁뒪 ?붾젅洹몃옩"),
+            (self._build_telegram_group("留ㅻℓ ?붾젅洹몃옩", "trade"), "留ㅻℓ ?붾젅洹몃옩"),
+            (self._build_ai_group(), "AI API"),
+        ]
+        base_height = page_specs[1][0].sizeHint().height()
+        for page, title in page_specs:
+            page.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            page.setFixedHeight(base_height)
+            tabs.addTab(page, title)
+        tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        tabs.setFixedHeight(base_height + tabs.tabBar().sizeHint().height())
+        return tabs
         tabs = QTabWidget(self)
         tabs.addTab(self._build_kiwoom_group(), "키움/계좌")
         tabs.addTab(self._build_naver_group(), "네이버 뉴스 API")
