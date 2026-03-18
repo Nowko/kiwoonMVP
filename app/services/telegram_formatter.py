@@ -249,6 +249,55 @@ class TelegramFormatter(object):
             notes.append("악재 해석 가능성이 있어 변동성이 커질 수 있습니다.")
         return "\n".join(notes)
 
+    def _normalize_risk_note(self, risk_note, certainty, novelty, direction):
+        text = self._text(risk_note, default="")
+        fallback = self._build_risk_text(certainty, novelty, direction)
+        generic_phrases = [
+            "선반영 가능성 있음",
+            "선반영 가능성",
+            "주의 필요",
+            "확인 필요",
+        ]
+
+        candidates = []
+        for raw in [text, fallback]:
+            raw = self._text(raw, default="")
+            if not raw:
+                continue
+            raw = raw.replace("\r\n", "\n").replace("\r", "\n")
+            for part in raw.split("\n"):
+                line = part.strip(" -")
+                if not line:
+                    continue
+                if any(phrase == line for phrase in generic_phrases):
+                    continue
+                if line in candidates:
+                    continue
+                candidates.append(line)
+
+        if not candidates:
+            return "-"
+
+        priority_keywords = [
+            ("악재", 0),
+            ("부정", 0),
+            ("변동성", 1),
+            ("모호", 2),
+            ("원문", 2),
+            ("중복", 3),
+            ("재료", 3),
+            ("추격", 3),
+        ]
+
+        def _priority(line):
+            for keyword, order in priority_keywords:
+                if keyword in line:
+                    return order
+            return 9
+
+        candidates.sort(key=lambda line: (_priority(line), len(line)))
+        return self._multiline_compact_text(candidates[0])
+
     def format_lines(self, title, lines):
         lines = list(lines or [])
         safe_lines = [html.escape(str(x)) for x in lines]
@@ -287,12 +336,11 @@ class TelegramFormatter(object):
         reason = self._multiline_compact_text(
             self._build_reason_text(extra.get("event_type"), extra.get("direction"), final_score, extra.get("trade_action"))
         )
-        risk_note = self._multiline_compact_text(
-            self._build_risk_text(
-                self._pick_first(extra.get("certainty_score"), extra.get("confidence_score")),
-                extra.get("novelty_score"),
-                extra.get("direction"),
-            )
+        risk_note = self._normalize_risk_note(
+            self._pick_first(extra.get("risk_note"), top.get("risk_note")),
+            self._pick_first(extra.get("certainty_score"), extra.get("confidence_score")),
+            extra.get("novelty_score"),
+            extra.get("direction"),
         )
         reference_price_value = self._pick_first_positive_number(
             symbol_meta.get("reference_price"),
