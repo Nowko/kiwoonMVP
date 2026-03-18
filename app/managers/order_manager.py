@@ -673,6 +673,92 @@ class OrderManager(QObject):
                     for item in items
                 ],
             )
+            self._reconcile_today_account_snapshots(account_no, snapshot_ts=snapshot_ts)
+
+    def _reconcile_today_account_snapshots(self, account_no, snapshot_ts=""):
+        account_no = str(account_no or "").strip()
+        if not account_no:
+            return
+        trade_date = self.persistence.today_str()
+        snapshot_ts = str(snapshot_ts or self.persistence.now_ts())
+        holding_row = self.persistence.fetchone(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(eval_profit), 0) AS eval_sum FROM positions WHERE account_no=? AND qty>0",
+            (account_no,),
+        ) or {}
+        sold_row = self.persistence.fetchone(
+            "SELECT COUNT(*) AS sold_cnt, COALESCE(SUM(pnl_realized), 0) AS realized_sum FROM trade_cycles WHERE trade_date=? AND account_no=? AND status IN ('CLOSED', 'SIMULATED_CLOSED')",
+            (trade_date, account_no),
+        ) or {}
+        holding_eval_total = float(holding_row.get("eval_sum") or 0.0)
+        holding_count = int(holding_row.get("cnt") or 0)
+        sold_count = int(sold_row.get("sold_cnt") or 0)
+        cycle_realized_total = float(sold_row.get("realized_sum") or 0.0)
+        account_cash = self._get_account_cash_settings(account_no)
+        api_total_profit = float(account_cash.get("api_total_profit", 0.0) or 0.0)
+        api_realized_profit = float(account_cash.get("api_realized_profit", 0.0) or 0.0)
+        if api_realized_profit != 0:
+            realized_profit_total = api_realized_profit
+        elif api_total_profit != 0:
+            realized_profit_total = api_total_profit - holding_eval_total
+        else:
+            realized_profit_total = cycle_realized_total
+        total_pnl = holding_eval_total + realized_profit_total
+        self.persistence.execute(
+            """
+            INSERT INTO daily_account_summary (
+                trade_date, account_no, eval_profit_total, realized_profit_total,
+                holding_count, sold_count, extra_json
+            ) VALUES (?, ?, ?, ?, ?, ?, '{}')
+            ON CONFLICT(trade_date, account_no) DO UPDATE SET
+                eval_profit_total=excluded.eval_profit_total,
+                realized_profit_total=excluded.realized_profit_total,
+                holding_count=excluded.holding_count,
+                sold_count=excluded.sold_count
+            """,
+            (
+                trade_date,
+                account_no,
+                holding_eval_total,
+                realized_profit_total,
+                holding_count,
+                sold_count,
+            ),
+        )
+        existing_review = self.persistence.fetchone(
+            "SELECT is_finalized, extra_json FROM daily_trade_review_summary WHERE trade_date=? AND account_no=?",
+            (trade_date, account_no),
+        )
+        is_finalized = int(existing_review["is_finalized"] or 0) if existing_review else (1 if self._is_daily_review_finalized() else 0)
+        extra_json = existing_review["extra_json"] if existing_review and existing_review["extra_json"] else json.dumps({"snapshot_type": "daily_review"}, ensure_ascii=False)
+        self.persistence.execute(
+            """
+            INSERT INTO daily_trade_review_summary (
+                trade_date, account_no, snapshot_ts, holding_eval_total, realized_profit_total,
+                total_pnl, holding_count, sold_count, is_finalized, extra_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(trade_date, account_no) DO UPDATE SET
+                snapshot_ts=excluded.snapshot_ts,
+                holding_eval_total=excluded.holding_eval_total,
+                realized_profit_total=excluded.realized_profit_total,
+                total_pnl=excluded.total_pnl,
+                holding_count=excluded.holding_count,
+                sold_count=excluded.sold_count,
+                is_finalized=excluded.is_finalized,
+                extra_json=excluded.extra_json
+            """,
+            (
+                trade_date,
+                account_no,
+                snapshot_ts,
+                holding_eval_total,
+                realized_profit_total,
+                total_pnl,
+                holding_count,
+                sold_count,
+                is_finalized,
+                extra_json,
+            ),
+        )
 
     def get_daily_review_date_status_map(self):
         rows = self.persistence.fetchall(
@@ -1734,6 +1820,7 @@ class OrderManager(QObject):
             emit_signal=False,
         )
         self.save_daily_review_snapshot()
+        self._reconcile_today_account_snapshots(account_no)
         self.summaries_changed.emit()
         self.log_emitted.emit(
             "💹 계좌 실현손익 반영: {0} / 실현손익={1} / field={2}".format(
@@ -2261,4 +2348,5 @@ class OrderManager(QObject):
                     int(realized_row["sold_cnt"] or 0),
                 ),
             )
+            self._reconcile_today_account_snapshots(account_no)
         self.save_daily_review_snapshot()
