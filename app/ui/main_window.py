@@ -191,7 +191,9 @@ class MainWindow(QMainWindow):
         self._news_watch_refresh_index = 0
         self._news_watch_refresh_restore_code = ""
         self._news_watch_refresh_restore_row = -1
-        self._news_watch_batch_size = 12
+        self._news_watch_batch_size = 10
+        self._news_watch_initial_batch_size = 10
+        self._news_watch_scroll_threshold = 3
         self._news_watch_refresh_batch_timer = QTimer(self)
         self._news_watch_refresh_batch_timer.setSingleShot(True)
         self._news_watch_refresh_batch_timer.timeout.connect(self._process_news_watch_refresh_batch)
@@ -2811,6 +2813,7 @@ class MainWindow(QMainWindow):
         self.table_news_watch.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table_news_watch.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table_news_watch.setSortingEnabled(False)
+        self.table_news_watch.verticalScrollBar().valueChanged.connect(self._on_news_watch_scroll_changed)
         layout.addWidget(self.table_news_watch)
         row = QHBoxLayout()
         self.btn_recheck_news = QPushButton("선택 종목 뉴스 재검색")
@@ -5772,6 +5775,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(80, lambda: self._schedule_refresh_news_watch(80))
             return
         self._set_news_watch_loading(False)
+        QTimer.singleShot(0, self._maybe_queue_news_watch_next_batch)
 
     def _pause_news_watch_refresh(self):
         if self._refresh_news_watch_timer.isActive():
@@ -5785,6 +5789,29 @@ class MainWindow(QMainWindow):
             self.table_news_watch.setUpdatesEnabled(True)
         self._set_news_watch_loading(False)
 
+    def _on_news_watch_scroll_changed(self, _value):
+        if not self._is_news_watch_tab_active():
+            return
+        self._maybe_queue_news_watch_next_batch()
+
+    def _maybe_queue_news_watch_next_batch(self):
+        if self._news_watch_refresh_running:
+            return
+        total_count = len(self._news_watch_refresh_rows or [])
+        loaded_count = int(self._news_watch_refresh_index or 0)
+        if loaded_count >= total_count:
+            return
+        scrollbar = self.table_news_watch.verticalScrollBar()
+        if scrollbar is None:
+            return
+        remaining = int(scrollbar.maximum() - scrollbar.value())
+        if remaining > int(self._news_watch_scroll_threshold or 3):
+            return
+        self._news_watch_refresh_running = True
+        self.table_news_watch.setUpdatesEnabled(False)
+        self.table_news_watch.blockSignals(True)
+        self._news_watch_refresh_batch_timer.start(0)
+
     def _process_news_watch_refresh_batch(self):
         if not self._news_watch_refresh_running:
             return
@@ -5797,14 +5824,21 @@ class MainWindow(QMainWindow):
             self._finalize_news_watch_refresh()
             return
         start_index = int(self._news_watch_refresh_index or 0)
-        end_index = min(start_index + int(self._news_watch_batch_size or 60), total_count)
+        batch_size = int(self._news_watch_batch_size or 10)
+        if start_index <= 0:
+            batch_size = max(batch_size, int(self._news_watch_initial_batch_size or 10))
+        end_index = min(start_index + batch_size, total_count)
+        current_row_count = self.table_news_watch.rowCount()
+        if current_row_count < end_index:
+            self.table_news_watch.setRowCount(end_index)
         for row_index in range(start_index, end_index):
             self._populate_news_watch_row(row_index, rows[row_index])
+            if self._news_watch_refresh_restore_row < 0 and self._news_watch_refresh_restore_code:
+                row_code = str(rows[row_index].get("code") or "").strip()
+                if row_code and row_code == self._news_watch_refresh_restore_code:
+                    self._news_watch_refresh_restore_row = row_index
         self._news_watch_refresh_index = end_index
         self._set_news_watch_loading(True, self._news_watch_loading_message(end_index, total_count))
-        if end_index < total_count:
-            self._news_watch_refresh_batch_timer.start(15)
-            return
         self._finalize_news_watch_refresh()
 
     def _fetch_realtime_capture_log_rows(self, limit_count=None):
@@ -6120,7 +6154,7 @@ class MainWindow(QMainWindow):
         self.table_news_watch.blockSignals(True)
         self.table_news_watch.setSortingEnabled(False)
         self.table_news_watch.clearContents()
-        self.table_news_watch.setRowCount(len(self._news_watch_refresh_rows))
+        self.table_news_watch.setRowCount(0)
         self._news_watch_refresh_batch_timer.start(0)
 
     def _selected_watch_symbol(self):
