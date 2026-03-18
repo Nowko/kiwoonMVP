@@ -1401,6 +1401,13 @@ class MainWindow(QMainWindow):
     def _build_log_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        self.lbl_policy_logs_title = QLabel("주문 정책 로그")
+        self.lbl_policy_logs_title.setStyleSheet("font-weight: 700;")
+        layout.addWidget(self.lbl_policy_logs_title)
+        self.lbl_policy_logs_empty = QLabel("미체결 재호가, 취소, 시장가 전환 같은 주문 정책 동작이 있을 때 표시됩니다.")
+        self.lbl_policy_logs_empty.setStyleSheet("color: #666;")
+        self.lbl_policy_logs_empty.setWordWrap(True)
+        layout.addWidget(self.lbl_policy_logs_empty)
         self.lbl_news_watch_loading = QLabel("뉴스감시 데이터 로딩 중...")
         self.lbl_news_watch_loading.setStyleSheet("color: #8a5a00; font-weight: 700; background: #fff4d6; padding: 6px 8px; border: 1px solid #f2d28b;")
         self.lbl_news_watch_loading.setVisible(False)
@@ -5443,6 +5450,8 @@ class MainWindow(QMainWindow):
     def refresh_policy_logs(self):
         rows = self.persistence.fetchall("SELECT * FROM order_policy_logs ORDER BY log_id DESC LIMIT 100")
         self.table_policy_logs.setRowCount(len(rows))
+        if hasattr(self, "lbl_policy_logs_empty"):
+            self.lbl_policy_logs_empty.setVisible(len(rows) <= 0)
         for row_index, row in enumerate(rows):
             detail = self._safe_json_dict(row["detail_json"] or "{}")
             detail_text = []
