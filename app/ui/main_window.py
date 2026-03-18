@@ -1360,13 +1360,14 @@ class MainWindow(QMainWindow):
                     item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
                 self.table_realtime_reference.setItem(row_index, col_index, item)
         layout.addWidget(self.table_realtime_reference)
-        self.table_realtime_capture_log = QTableWidget(int(self._realtime_capture_log_max_rows or 3), 5, self)
+        self.table_realtime_capture_log = QTableWidget(int(self._realtime_capture_log_max_rows or 3), 6, self)
         self.table_realtime_capture_log.setHorizontalHeaderLabels([
             "종목명",
             "종목코드",
             "현재가",
             "판정",
             "검색식 + 전략",
+            "시각",
         ])
         capture_header = self.table_realtime_capture_log.horizontalHeader()
         capture_header.setSectionResizeMode(0, QHeaderView.Fixed)
@@ -1374,10 +1375,12 @@ class MainWindow(QMainWindow):
         capture_header.setSectionResizeMode(2, QHeaderView.Fixed)
         capture_header.setSectionResizeMode(3, QHeaderView.Fixed)
         capture_header.setSectionResizeMode(4, QHeaderView.Stretch)
+        capture_header.setSectionResizeMode(5, QHeaderView.Fixed)
         self.table_realtime_capture_log.setColumnWidth(0, 110)
         self.table_realtime_capture_log.setColumnWidth(1, 78)
         self.table_realtime_capture_log.setColumnWidth(2, 88)
         self.table_realtime_capture_log.setColumnWidth(3, 88)
+        self.table_realtime_capture_log.setColumnWidth(5, 88)
         self.table_realtime_capture_log.verticalHeader().setVisible(False)
         self.table_realtime_capture_log.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_realtime_capture_log.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1403,11 +1406,11 @@ class MainWindow(QMainWindow):
         )
         self.table_realtime_capture_log.setMaximumHeight(128)
         for row_index in range(int(self._realtime_capture_log_max_rows or 3)):
-            for col_index in range(5):
+            for col_index in range(6):
                 item = QTableWidgetItem("")
                 if col_index == 2:
                     item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-                elif col_index == 3:
+                elif col_index in [3, 5]:
                     item.setTextAlignment(int(Qt.AlignCenter))
                 self.table_realtime_capture_log.setItem(row_index, col_index, item)
         layout.addWidget(self.table_realtime_capture_log)
@@ -5689,7 +5692,7 @@ class MainWindow(QMainWindow):
             ORDER BY se.event_id DESC
             LIMIT ?
             """,
-            (limit_count,),
+            (max(limit_count * 4, limit_count),),
         )
         return list(reversed(list(rows or [])))
 
@@ -5736,13 +5739,34 @@ class MainWindow(QMainWindow):
         except Exception:
             policy = {}
         source = str(policy.get("source") or "").strip().lower()
+        preview = "-"
+        try:
+            buy_items = json.loads(policy.get("buy_expression_json") or "[]")
+        except Exception:
+            buy_items = []
+        try:
+            preview = self._format_expression_preview("buy", buy_items, empty_text=u"전략없음")
+        except Exception:
+            preview = u"전략없음"
         if source == "slot":
-            strategy_label = "슬롯전략"
+            source_label = u"슬롯"
         elif source == "default":
-            strategy_label = "디폴트전략"
+            source_label = u"기본"
         else:
-            strategy_label = "전략미정"
-        return "{0} / {1}".format(base_text, strategy_label)
+            source_label = u"미정"
+        return u"{0} / {1} / {2}".format(base_text, source_label, preview)
+
+    def _format_capture_log_time_text(self, value):
+        text = str(value or "").strip()
+        if not text:
+            return "-"
+        if " " in text:
+            text = text.split(" ")[-1]
+        if "." in text:
+            text = text.split(".", 1)[0]
+        if len(text) >= 8 and ":" in text:
+            return text[:8]
+        return text
 
     def _build_realtime_capture_log_row_data(self, raw_row):
         raw_row = dict(raw_row or {})
@@ -5761,7 +5785,25 @@ class MainWindow(QMainWindow):
             "current_price": current_price,
             "result": self._translate_capture_log_result(raw_row.get("current_state"), payload.get("event_type") or "condition_enter"),
             "condition_strategy": self._resolve_capture_log_strategy_text(raw_row.get("source_condition_slot"), condition_name),
+            "detected_at": self._format_capture_log_time_text(raw_row.get("ts") or payload.get("ts") or ""),
         }
+
+    def _compress_realtime_capture_log_rows(self, rows):
+        compressed = []
+        last_key = None
+        for row in list(rows or []):
+            row = dict(row or {})
+            key = (
+                str(row.get("code") or "").strip(),
+                str(row.get("condition_strategy") or "").strip(),
+            )
+            if key == last_key:
+                if compressed:
+                    compressed[-1] = row
+                continue
+            compressed.append(row)
+            last_key = key
+        return compressed
 
     def _populate_realtime_capture_log_row(self, row_index, row_data):
         table = getattr(self, "table_realtime_capture_log", None)
@@ -5774,6 +5816,7 @@ class MainWindow(QMainWindow):
             "{0:,.0f}".format(float(row_data.get("current_price") or 0.0)) if float(row_data.get("current_price") or 0.0) > 0 else "-",
             str(row_data.get("result") or "-"),
             str(row_data.get("condition_strategy") or "-"),
+            str(row_data.get("detected_at") or "-"),
         ]
         for col_index, value_text in enumerate(columns):
             item = table.item(row_index, col_index)
@@ -5781,7 +5824,7 @@ class MainWindow(QMainWindow):
                 item = QTableWidgetItem("")
                 if col_index == 2:
                     item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-                elif col_index == 3:
+                elif col_index in [3, 5]:
                     item.setTextAlignment(int(Qt.AlignCenter))
                 table.setItem(row_index, col_index, item)
             item.setText(str(value_text))
@@ -5808,7 +5851,7 @@ class MainWindow(QMainWindow):
                 item = QTableWidgetItem("")
                 if col_index == 2:
                     item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-                elif col_index == 3:
+                elif col_index in [3, 5]:
                     item.setTextAlignment(int(Qt.AlignCenter))
                 table.setItem(row_index, col_index, item)
             item.setText("")
@@ -5854,6 +5897,7 @@ class MainWindow(QMainWindow):
 
     def refresh_realtime_capture_log(self):
         rows = [self._build_realtime_capture_log_row_data(row) for row in self._fetch_realtime_capture_log_rows()]
+        rows = self._compress_realtime_capture_log_rows(rows)
         self._render_realtime_capture_log_rows(rows)
 
     def _on_realtime_capture_log_symbol_detected(self, payload):
@@ -5877,7 +5921,18 @@ class MainWindow(QMainWindow):
                 payload.get("slot_no"),
                 payload.get("condition_name"),
             ),
+            "detected_at": self._format_capture_log_time_text(payload.get("ts") or self.persistence.now_ts()),
         }
+        table = getattr(self, "table_realtime_capture_log", None)
+        if table is not None:
+            last_row_index = max(0, int(self._realtime_capture_log_max_rows or 3) - 1)
+            last_code_item = table.item(last_row_index, 1)
+            last_strategy_item = table.item(last_row_index, 4)
+            last_code = str(last_code_item.text() if last_code_item is not None else "").strip()
+            last_strategy = str(last_strategy_item.text() if last_strategy_item is not None else "").strip()
+            if last_code == str(row_data.get("code") or "").strip() and last_strategy == str(row_data.get("condition_strategy") or "").strip():
+                self._populate_realtime_capture_log_row(last_row_index, row_data)
+                return
         self._append_realtime_capture_log_row(row_data)
 
     def _on_right_tab_changed(self, index):
