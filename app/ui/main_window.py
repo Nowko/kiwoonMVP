@@ -3191,6 +3191,10 @@ class MainWindow(QMainWindow):
 
     def _request_login_with_loading(self, auto_trigger=False):
         self._manual_api_disconnect = False
+        if hasattr(self.condition_manager, "set_startup_background_mode"):
+            self.condition_manager.set_startup_background_mode(True, duration_sec=150)
+        if hasattr(self.pipeline_manager, "set_startup_background_mode"):
+            self.pipeline_manager.set_startup_background_mode(True, duration_sec=150)
         if not self._startup_bootstrap_active:
             self._begin_startup_loading("필수 시작 작업을 준비하는 중입니다.")
         self._set_startup_loading_message(
@@ -3952,7 +3956,15 @@ class MainWindow(QMainWindow):
             return
         self._set_startup_step("account_sync", "done", "계좌 동기화를 마쳤고 후속 시작 작업을 정리 중입니다.")
         self._schedule_deferred_account_sync()
-        self._check_startup_warmup()
+        snapshot_count, detection_count = self._get_startup_warmup_counts()
+        if snapshot_count > 0 or detection_count > 0:
+            self.append_log(
+                "⏳ 시작 후 후속작업을 백그라운드로 이어갑니다: 기준치 {0}건 / 파이프라인 {1}건".format(
+                    int(snapshot_count or 0),
+                    int(detection_count or 0),
+                )
+            )
+        self._finish_startup_loading()
 
     def _on_execution_mode_changed(self):
         self.order_manager.set_execution_mode(self.cbo_execution_mode.currentData())

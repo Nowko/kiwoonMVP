@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import datetime
 import json
+import time
 
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 
@@ -22,6 +23,7 @@ class ConditionCatalogManager(QObject):
         self._snapshot_refresh_last_ts = {}
         self._snapshot_refresh_cooldown_sec = 90.0
         self._initial_tr_condition_priority_count = 3
+        self._startup_background_mode_until = 0.0
         self._realtime_start_queue = []
         self._realtime_start_attempts = {}
         self._realtime_start_timer = QTimer(self)
@@ -38,6 +40,15 @@ class ConditionCatalogManager(QObject):
 
     def get_pending_snapshot_job_count(self):
         return int(len(self._pending_snapshot_jobs or []))
+
+    def set_startup_background_mode(self, enabled=True, duration_sec=120):
+        if enabled:
+            self._startup_background_mode_until = time.monotonic() + max(10.0, float(duration_sec or 120))
+        else:
+            self._startup_background_mode_until = 0.0
+
+    def _is_startup_background_mode(self):
+        return time.monotonic() < float(self._startup_background_mode_until or 0.0)
 
     def _on_conditions_loaded(self, rows):
         now = self.persistence.now_ts()
@@ -389,6 +400,10 @@ class ConditionCatalogManager(QObject):
 
     def _get_snapshot_job_min_interval_ms(self, now_dt=None):
         now_dt = now_dt or datetime.datetime.now()
+        if self._is_startup_background_mode():
+            if self._is_regular_market_hours(now_dt):
+                return 2200
+            return 3200
         if self._is_regular_market_hours(now_dt):
             return 900
         return 2500

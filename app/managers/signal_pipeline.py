@@ -20,6 +20,7 @@ class SignalPipelineManager(QObject):
         self.account_manager = account_manager
         self._recent_detected = {}
         self._detected_cooldown_sec = 12.0
+        self._startup_background_mode_until = 0.0
         self._pending_detection_jobs = []
         self._pending_detection_job_keys = set()
         self._detection_job_spacing_ms = 150
@@ -29,6 +30,17 @@ class SignalPipelineManager(QObject):
 
         self.condition_manager.symbol_detected.connect(self._on_symbol_detected)
         self.news_manager.news_found.connect(self._on_news_found)
+
+    def set_startup_background_mode(self, enabled=True, duration_sec=120):
+        if enabled:
+            self._startup_background_mode_until = time.monotonic() + max(10.0, float(duration_sec or 120))
+        else:
+            self._startup_background_mode_until = 0.0
+
+    def _current_detection_job_spacing_ms(self):
+        if time.monotonic() < float(self._startup_background_mode_until or 0.0):
+            return max(320, int(self._detection_job_spacing_ms or 150) * 3)
+        return max(50, int(self._detection_job_spacing_ms or 150))
 
     def _is_buy_rejected_cooldown(self, symbol_row, now_dt=None):
         if str(symbol_row.get("current_state") or "") != "BUY_REJECTED":
@@ -63,7 +75,7 @@ class SignalPipelineManager(QObject):
         self._pending_detection_job_keys.add(job_key)
         self._pending_detection_jobs.append(dict(payload))
         if not self._detection_job_timer.isActive():
-            self._detection_job_timer.start(max(50, int(self._detection_job_spacing_ms)))
+            self._detection_job_timer.start(self._current_detection_job_spacing_ms())
 
     def get_pending_detection_job_count(self):
         return int(len(self._pending_detection_jobs or []))
@@ -82,7 +94,7 @@ class SignalPipelineManager(QObject):
             self._handle_symbol_detected(payload)
         finally:
             if self._pending_detection_jobs:
-                self._detection_job_timer.start(int(self._detection_job_spacing_ms))
+                self._detection_job_timer.start(self._current_detection_job_spacing_ms())
 
     def _handle_symbol_detected(self, payload):
         code = str(payload.get("code") or "")
