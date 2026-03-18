@@ -51,7 +51,13 @@ class NewsAnalysisManager(QObject):
             self.log_emitted.emit(u"🤖 뉴스 GPT 분석 적용: {0} / {1}".format(context.get("code", ""), self.gpt_analyzer.model))
             return result
         except Exception as exc:
-            self.log_emitted.emit(u"⚠️ GPT 뉴스 분석 실패, 규칙점수 분석으로 대체: {0}".format(exc))
+            code = str(context.get("code", "") or "").strip()
+            title = str(context.get("title", "") or "").strip().replace("\r", " ").replace("\n", " ")
+            if len(title) > 80:
+                title = title[:80] + "..."
+            self.log_emitted.emit(
+                u"⚠️ GPT 뉴스 분석 실패, 프로그램 분석으로 대체: [{0}] {1} / {2}".format(code, title or "-", exc)
+            )
             return base_result
 
     def should_use_ai(self, context, base_result):

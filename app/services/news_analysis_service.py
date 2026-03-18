@@ -281,7 +281,8 @@ class GPTNewsAnalyzer(object):
             "Content-Type": "application/json",
         }
         try:
-            response = requests.post(self.base_url, headers=headers, json=payload, timeout=self.timeout)
+            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            response = requests.post(self.base_url, headers=headers, data=body, timeout=self.timeout)
             response.raise_for_status()
         except requests.HTTPError as exc:
             detail = self._extract_http_error_detail(exc)
@@ -349,9 +350,9 @@ class GPTNewsAnalyzer(object):
         return result
 
     def _build_payload(self, context):
-        title = context.get("title", "") or ""
-        description = context.get("description", "") or ""
-        original_link = context.get("original_link", "") or ""
+        title = self._sanitize_prompt_text(context.get("title", "") or "", max_len=300)
+        description = self._sanitize_prompt_text(context.get("description", "") or "", max_len=1200)
+        original_link = self._sanitize_prompt_text(context.get("original_link", "") or "", max_len=500)
         duplicate_count = int(context.get("duplicate_count", 1) or 1)
         system_prompt = (
             "You are a Korean stock-news trading assistant. "
@@ -388,6 +389,17 @@ class GPTNewsAnalyzer(object):
         if self._supports_temperature():
             payload["temperature"] = 0
         return payload
+
+    def _sanitize_prompt_text(self, value, max_len=1000):
+        text = "" if value is None else str(value)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", text)
+        text = text.encode("utf-8", "replace").decode("utf-8", "replace")
+        text = re.sub(r"\s+", " ", text).strip()
+        if int(max_len or 0) > 0 and len(text) > int(max_len):
+            text = text[: int(max_len)].rstrip()
+        return text
 
     def _extract_content(self, data):
         try:
