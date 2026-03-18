@@ -17,6 +17,10 @@ from app.managers.condition_manager import ConditionCatalogManager
 from app.managers.strategy_manager import StrategyManager
 from app.managers.news_manager import NaverNewsManager
 from app.services.telegram_manager import TelegramManager
+from app.services.trade_control_session_store import TradeControlSessionStore
+from app.services.trade_control_telegram_formatter import TradeControlTelegramFormatter
+from app.services.trade_control_action_service import TradeControlActionService
+from app.services.trade_control_telegram_manager import TradeControlTelegramManager
 from app.services.news_analysis_manager import NewsAnalysisManager
 from app.services.file_log_manager import FileLogManager
 from app.services.daily_watch_snapshot_manager import DailyWatchSnapshotManager
@@ -174,6 +178,23 @@ def main():
         strategy_manager=strategy_manager,
         realtime_market_state_manager=realtime_market_state_manager,
     )
+    trade_control_session_store = TradeControlSessionStore(persistence)
+    trade_control_formatter = TradeControlTelegramFormatter()
+    trade_control_action_service = TradeControlActionService(
+        persistence=persistence,
+        account_manager=account_manager,
+        order_manager=order_manager,
+        condition_manager=condition_manager,
+        strategy_manager=strategy_manager,
+    )
+    trade_control_telegram_manager = TradeControlTelegramManager(
+        credential_manager=credential_manager,
+        telegram_service=telegram_router.service,
+        formatter=trade_control_formatter,
+        session_store=trade_control_session_store,
+        action_service=trade_control_action_service,
+        persistence=persistence,
+    )
     pipeline_manager = SignalPipelineManager(
         persistence=persistence,
         condition_manager=condition_manager,
@@ -207,6 +228,9 @@ def main():
         file_log_manager=file_log_manager,
         startup_context=startup_context,
     )
+    trade_control_action_service.set_main_window(window)
+    trade_control_telegram_manager.log_emitted.connect(window.append_log)
+    trade_control_telegram_manager.start()
     daily_watch_snapshot_manager.log_emitted.connect(window.append_log)
     realtime_market_state_manager.refresh_watch_codes()
     window.resize(1800, 980)

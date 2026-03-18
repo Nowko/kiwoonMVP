@@ -3982,6 +3982,37 @@ class MainWindow(QMainWindow):
         self._update_execution_mode_visual()
         self._schedule_user_profile_save()
 
+    def get_trade_enabled(self):
+        return str(self.cbo_execution_mode.currentData() or "live") == "live"
+
+    def set_trade_enabled(self, enabled):
+        target_mode = "live" if bool(enabled) else "simulated"
+        index = self.cbo_execution_mode.findData(target_mode)
+        if index >= 0 and self.cbo_execution_mode.currentIndex() != index:
+            self.cbo_execution_mode.setCurrentIndex(index)
+            return
+        self.order_manager.set_execution_mode(target_mode)
+        self._update_execution_mode_visual()
+        self._schedule_user_profile_save()
+
+    def stop_all_condition_realtime(self):
+        try:
+            for row in list(self.condition_manager.get_slots() or []):
+                if int(row["is_realtime"] or 0):
+                    self.condition_manager.stop_realtime_slot(int(row["slot_no"] or 0))
+        except Exception:
+            pass
+        self.refresh_slots()
+
+    def resume_enabled_condition_realtime(self):
+        try:
+            for row in list(self.condition_manager.get_slots() or []):
+                if int(row["is_enabled"] or 0):
+                    self.condition_manager.start_realtime_slot(int(row["slot_no"] or 0))
+        except Exception:
+            pass
+        self.refresh_slots()
+
     def _on_global_pw_mode_changed(self):
         self.edt_global_query_pw.setEnabled(self.cbo_global_pw_mode.currentData() == "program_input")
         self._schedule_user_profile_save()

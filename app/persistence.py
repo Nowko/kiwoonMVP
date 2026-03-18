@@ -342,6 +342,31 @@ class PersistenceManager(object):
                     extra_json TEXT DEFAULT '{}'
                 );
 
+                CREATE TABLE IF NOT EXISTS telegram_trade_sessions (
+                    user_id TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    selected_account_no TEXT DEFAULT '',
+                    current_menu TEXT DEFAULT '',
+                    pending_action_json TEXT DEFAULT '{}',
+                    last_message_id TEXT DEFAULT '',
+                    updated_at TEXT,
+                    PRIMARY KEY (user_id, chat_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS telegram_trade_action_logs (
+                    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT,
+                    user_id TEXT,
+                    chat_id TEXT,
+                    account_no TEXT,
+                    action_type TEXT,
+                    target_type TEXT,
+                    target_value TEXT,
+                    result TEXT,
+                    message TEXT,
+                    extra_json TEXT DEFAULT '{}'
+                );
+
                 CREATE TABLE IF NOT EXISTS user_runtime_profiles (
                     user_id TEXT PRIMARY KEY,
                     profile_json TEXT DEFAULT '{}',
@@ -463,6 +488,37 @@ class PersistenceManager(object):
                 min_score INTEGER DEFAULT 80,
                 sell_strategy_nos_json TEXT DEFAULT '[]',
                 updated_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_trade_sessions (
+                user_id TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                selected_account_no TEXT DEFAULT '',
+                current_menu TEXT DEFAULT '',
+                pending_action_json TEXT DEFAULT '{}',
+                last_message_id TEXT DEFAULT '',
+                updated_at TEXT,
+                PRIMARY KEY (user_id, chat_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_trade_action_logs (
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT,
+                user_id TEXT,
+                chat_id TEXT,
+                account_no TEXT,
+                action_type TEXT,
+                target_type TEXT,
+                target_value TEXT,
+                result TEXT,
+                message TEXT,
+                extra_json TEXT DEFAULT '{}'
             )
             """
         )
