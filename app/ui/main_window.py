@@ -172,6 +172,9 @@ class MainWindow(QMainWindow):
         self._refresh_policy_logs_timer = QTimer(self)
         self._refresh_policy_logs_timer.setSingleShot(True)
         self._refresh_policy_logs_timer.timeout.connect(self.refresh_policy_logs)
+        self._operations_refresh_pending = True
+        self._policy_logs_refresh_pending = True
+        self._scope_refresh_pending = True
         self._refresh_realtime_reference_timer = QTimer(self)
         self._refresh_realtime_reference_timer.setSingleShot(True)
         self._refresh_realtime_reference_timer.timeout.connect(self._refresh_realtime_strategy_reference_labels)
@@ -1422,6 +1425,7 @@ class MainWindow(QMainWindow):
 
     def _build_log_tab(self):
         widget = QWidget()
+        self.log_tab_widget = widget
         layout = QVBoxLayout(widget)
         self.lbl_policy_logs_title = QLabel("주문 정책 로그")
         self.lbl_policy_logs_title.setStyleSheet("font-weight: 700;")
@@ -2595,6 +2599,7 @@ class MainWindow(QMainWindow):
 
     def _build_scope_tab(self):
         widget = QWidget()
+        self.scope_tab_widget = widget
         layout = QVBoxLayout(widget)
         summary = QLabel("이 표는 HTS/API 잔고가 아니라 프로그램 체결기록 기준의 전략별 내부 복기입니다. 운영 탭 값과 다를 수 있습니다.")
         summary.setWordWrap(True)
@@ -2708,6 +2713,7 @@ class MainWindow(QMainWindow):
 
     def _build_operations_tab(self):
         widget = QWidget()
+        self.operations_tab_widget = widget
         layout = QVBoxLayout(widget)
         top_row = QHBoxLayout()
         top_row.addStretch(1)
@@ -2942,11 +2948,13 @@ class MainWindow(QMainWindow):
         self.refresh_sell_chain()
         self._refresh_strategy_policy_ui()
         self._load_account_advanced_settings()
-        self.refresh_operations()
+        self._operations_refresh_pending = True
+        self._scope_refresh_pending = True
         self._schedule_refresh_news_watch(80)
         self.refresh_spam_table()
-        self.refresh_policy_logs()
-        self.refresh_realtime_capture_log()
+        self._policy_logs_refresh_pending = True
+        if self._is_realtime_reference_tab_active():
+            self.refresh_realtime_capture_log()
         self._schedule_refresh_realtime_strategy_reference_labels(40)
         self._schedule_credential_verification()
         if self.credential_manager.get_auto_login_on_startup() and self.kiwoom_client.is_available():
@@ -3206,7 +3214,32 @@ class MainWindow(QMainWindow):
                 pass
 
     def _schedule_refresh_operations(self, delay_ms=250):
+        self._operations_refresh_pending = True
+        self._scope_refresh_pending = True
+        if not (self._is_operations_tab_active() or self._is_scope_tab_active()):
+            return
         self._refresh_operations_timer.start(max(50, int(delay_ms or 250)))
+
+    def _is_scope_tab_active(self):
+        return (
+            hasattr(self, "right_tabs")
+            and getattr(self, "scope_tab_widget", None) is not None
+            and self.right_tabs.currentWidget() == self.scope_tab_widget
+        )
+
+    def _is_operations_tab_active(self):
+        return (
+            hasattr(self, "right_tabs")
+            and getattr(self, "operations_tab_widget", None) is not None
+            and self.right_tabs.currentWidget() == self.operations_tab_widget
+        )
+
+    def _is_log_tab_active(self):
+        return (
+            hasattr(self, "right_tabs")
+            and getattr(self, "log_tab_widget", None) is not None
+            and self.right_tabs.currentWidget() == self.log_tab_widget
+        )
 
     def _is_news_watch_tab_active(self):
         return (
@@ -3556,6 +3589,9 @@ class MainWindow(QMainWindow):
         self._schedule_refresh_realtime_strategy_reference_labels(80)
 
     def _schedule_refresh_policy_logs(self, delay_ms=350):
+        self._policy_logs_refresh_pending = True
+        if not self._is_log_tab_active():
+            return
         self._refresh_policy_logs_timer.start(max(50, int(delay_ms or 350)))
 
     def _get_periodic_recheck_limit(self):
@@ -5122,6 +5158,7 @@ class MainWindow(QMainWindow):
             self.table_daily_review_items.setItem(row_index, 4, self._make_number_item(row.get("realized_profit") or 0, signed=True))
 
     def refresh_strategy_analysis(self):
+        self._scope_refresh_pending = False
         rows = self._build_strategy_analysis_rows()
         self.table_strategy_analysis.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
@@ -5413,6 +5450,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "미체결 즉시 시장가 전환", "수동 시장가 전환 요청을 수행하지 못했습니다")
 
     def refresh_operations(self):
+        if not (self._is_operations_tab_active() or self._is_scope_tab_active()):
+            self._operations_refresh_pending = True
+            self._scope_refresh_pending = True
+            return
+        self._operations_refresh_pending = False
         rows = self.persistence.fetchall(
             """
             SELECT
@@ -5537,9 +5579,16 @@ class MainWindow(QMainWindow):
             self.table_open_orders.setItem(row_index, 7, self._make_number_item(row["order_price"]))
             self.table_open_orders.setItem(row_index, 8, self._make_table_item(stage_text))
 
-        self.refresh_strategy_analysis()
+        if self._is_scope_tab_active():
+            self.refresh_strategy_analysis()
+        else:
+            self._scope_refresh_pending = True
 
     def refresh_policy_logs(self):
+        if not self._is_log_tab_active():
+            self._policy_logs_refresh_pending = True
+            return
+        self._policy_logs_refresh_pending = False
         rows = self.persistence.fetchall("SELECT * FROM order_policy_logs ORDER BY log_id DESC LIMIT 100")
         self.table_policy_logs.setRowCount(len(rows))
         if hasattr(self, "lbl_policy_logs_empty"):
@@ -6023,6 +6072,18 @@ class MainWindow(QMainWindow):
                 self._set_news_watch_loading(True, self._news_watch_loading_message())
                 QTimer.singleShot(40, lambda: self._schedule_refresh_news_watch(120))
             self._schedule_refresh_realtime_strategy_reference_labels(80)
+            return
+        if current_widget == getattr(self, "operations_tab_widget", None):
+            if self._operations_refresh_pending and not self._refresh_operations_timer.isActive():
+                QTimer.singleShot(30, lambda: self._schedule_refresh_operations(80))
+            return
+        if current_widget == getattr(self, "scope_tab_widget", None):
+            if self._scope_refresh_pending:
+                QTimer.singleShot(30, self.refresh_strategy_analysis)
+            return
+        if current_widget == getattr(self, "log_tab_widget", None):
+            if self._policy_logs_refresh_pending and not self._refresh_policy_logs_timer.isActive():
+                QTimer.singleShot(30, lambda: self._schedule_refresh_policy_logs(80))
             return
         self._set_news_watch_loading(False)
 
