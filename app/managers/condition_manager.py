@@ -21,6 +21,11 @@ class ConditionCatalogManager(QObject):
         self._pending_snapshot_job_keys = set()
         self._snapshot_refresh_last_ts = {}
         self._snapshot_refresh_cooldown_sec = 90.0
+        self._realtime_start_queue = []
+        self._realtime_start_attempts = {}
+        self._realtime_start_timer = QTimer(self)
+        self._realtime_start_timer.setSingleShot(True)
+        self._realtime_start_timer.timeout.connect(self._process_next_realtime_slot_start)
         self._snapshot_job_timer = QTimer(self)
         self._snapshot_job_timer.setSingleShot(True)
         self._snapshot_job_timer.timeout.connect(self._process_next_snapshot_job)
@@ -106,10 +111,13 @@ class ConditionCatalogManager(QObject):
         return True
 
     def clear_slot(self, slot_no):
+        slot_no = int(slot_no)
+        self._realtime_start_queue = [item for item in list(self._realtime_start_queue or []) if int(item.get("slot_no") or 0) != slot_no]
+        self._realtime_start_attempts.pop(slot_no, None)
         now = self.persistence.now_ts()
         self.persistence.execute(
             "UPDATE active_condition_slots SET condition_id=NULL, is_enabled=0, is_realtime=0, current_count=0, last_event_at=NULL, updated_at=? WHERE slot_no=?",
-            (now, int(slot_no)),
+            (now, slot_no),
         )
         self.log_emitted.emit("🧹 슬롯 {0} 비움".format(slot_no))
         self.slots_changed.emit()
@@ -130,7 +138,39 @@ class ConditionCatalogManager(QObject):
         )
         self.slots_changed.emit()
 
+    def _queue_realtime_slot_start(self, slot_no, attempt=1, delay_ms=250):
+        slot_no = int(slot_no or 0)
+        if slot_no <= 0:
+            return
+        for item in list(self._realtime_start_queue or []):
+            if int(item.get("slot_no") or 0) == slot_no:
+                if int(item.get("attempt") or 0) >= int(attempt or 0):
+                    return
+                item["attempt"] = int(attempt or 1)
+                break
+        else:
+            self._realtime_start_queue.append({
+                "slot_no": slot_no,
+                "attempt": int(attempt or 1),
+            })
+        if not self._realtime_start_timer.isActive():
+            self._realtime_start_timer.start(max(0, int(delay_ms or 0)))
+
+    def _process_next_realtime_slot_start(self):
+        if not self._realtime_start_queue:
+            return
+        item = self._realtime_start_queue.pop(0)
+        slot_no = int(item.get("slot_no") or 0)
+        attempt = int(item.get("attempt") or 1)
+        self._start_realtime_slot_now(slot_no, attempt=attempt)
+        if self._realtime_start_queue:
+            self._realtime_start_timer.start(350)
+
     def start_realtime_slot(self, slot_no):
+        self._queue_realtime_slot_start(slot_no, attempt=1, delay_ms=0)
+        return True
+
+    def _start_realtime_slot_now(self, slot_no, attempt=1):
         row = self.persistence.fetchone(
             """
             SELECT s.slot_no, s.condition_id, c.condition_index, c.condition_name
@@ -146,12 +186,20 @@ class ConditionCatalogManager(QObject):
         screen_no = "51{0:02d}".format(int(slot_no))
         ok = self.kiwoom_client.send_condition(screen_no, row["condition_name"], row["condition_index"], 1)
         if ok:
+            self._realtime_start_attempts.pop(int(slot_no), None)
             self.set_slot_enabled(slot_no, True, True)
         else:
+            self._realtime_start_attempts[int(slot_no)] = int(attempt or 1)
             self.set_slot_realtime_status(slot_no, False)
+            if int(attempt or 1) < 3:
+                self.log_emitted.emit("🔁 조건검색 재시도 예약: 슬롯 {0} / {1}회차".format(slot_no, int(attempt or 1) + 1))
+                self._queue_realtime_slot_start(slot_no, attempt=int(attempt or 1) + 1, delay_ms=1200)
         return ok
 
     def stop_realtime_slot(self, slot_no):
+        slot_no = int(slot_no)
+        self._realtime_start_queue = [item for item in list(self._realtime_start_queue or []) if int(item.get("slot_no") or 0) != slot_no]
+        self._realtime_start_attempts.pop(slot_no, None)
         row = self.persistence.fetchone(
             """
             SELECT s.slot_no, s.condition_id, c.condition_index, c.condition_name
@@ -159,11 +207,11 @@ class ConditionCatalogManager(QObject):
             LEFT JOIN condition_catalog c ON s.condition_id = c.condition_id
             WHERE s.slot_no=?
             """,
-            (int(slot_no),),
+            (slot_no,),
         )
         if not row or not row["condition_id"]:
             return False
-        screen_no = "51{0:02d}".format(int(slot_no))
+        screen_no = "51{0:02d}".format(slot_no)
         ok = self.kiwoom_client.stop_condition(screen_no, row["condition_name"], row["condition_index"])
         if ok:
             self.set_slot_realtime_status(slot_no, False)
@@ -184,6 +232,9 @@ class ConditionCatalogManager(QObject):
 
     def reset_slots(self):
         now = self.persistence.now_ts()
+        self._realtime_start_queue = []
+        self._realtime_start_attempts = {}
+        self._realtime_start_timer.stop()
         for slot_no in range(1, 11):
             self.persistence.execute(
                 "UPDATE active_condition_slots SET condition_id=NULL, is_enabled=0, is_realtime=0, current_count=0, last_event_at=NULL, updated_at=? WHERE slot_no=?",
@@ -198,6 +249,9 @@ class ConditionCatalogManager(QObject):
     def import_slot_profile(self, items):
         items = items or []
         now = self.persistence.now_ts()
+        self._realtime_start_queue = []
+        self._realtime_start_attempts = {}
+        self._realtime_start_timer.stop()
         catalog = self.get_catalog()
         by_name = dict((str(row["condition_name"] or ""), row) for row in catalog)
         by_index = dict((int(row["condition_index"] or 0), row) for row in catalog)
@@ -241,7 +295,7 @@ class ConditionCatalogManager(QObject):
                 restore_realtime.append(slot_no)
         self.slots_changed.emit()
         for slot_no in restore_realtime:
-            self.start_realtime_slot(slot_no)
+            self._queue_realtime_slot_start(slot_no, attempt=1, delay_ms=250)
 
     def _find_slot_by_condition_index(self, condition_index):
         return self.persistence.fetchone(
