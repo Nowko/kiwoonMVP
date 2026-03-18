@@ -58,7 +58,7 @@ class TradeControlTelegramManager(QObject):
                     self._offset_by_token[bot_token] = update_id + 1
                     self._handle_update(bot_token, update, allowed_chat_ids)
         except Exception as exc:
-            self.log_emitted.emit("⚠️ 매매 텔레그램 폴링 오류: {0}".format(exc))
+            self.log_emitted.emit("텔레그램 매매관리 업데이트 오류: {0}".format(exc))
         finally:
             self._polling = False
 
@@ -103,8 +103,12 @@ class TradeControlTelegramManager(QObject):
             return self._show_status(bot_token, user_id, chat_id)
         if command == "/accounts":
             return self._show_accounts(bot_token, user_id, chat_id)
+        if command == "/hold":
+            return self._show_holdings(bot_token, user_id, chat_id, self._resolve_selected_account(user_id, chat_id))
         if command == "/open":
             return self._show_open_orders(bot_token, user_id, chat_id, self._resolve_selected_account(user_id, chat_id))
+        if command == "/conditions":
+            return self._show_conditions(bot_token, user_id, chat_id)
         if command == "/trade":
             return self._show_trade_control(bot_token, user_id, chat_id)
         if command == "/panic":
@@ -132,11 +136,20 @@ class TradeControlTelegramManager(QObject):
             return self._show_account_detail(bot_token, user_id, chat_id, parts[2], message_id)
         if area == "acct" and action == "select" and len(parts) >= 3:
             return self._select_account(bot_token, user_id, chat_id, parts[2], message_id)
+        if area == "hold" and action == "list":
+            account_no = parts[2] if len(parts) >= 3 and str(parts[2] or "").strip() else self._resolve_selected_account(user_id, chat_id)
+            return self._show_holdings(bot_token, user_id, chat_id, account_no, message_id)
+        if area == "hold" and action == "detail" and len(parts) >= 4:
+            return self._show_holding_detail(bot_token, user_id, chat_id, parts[2], parts[3], message_id)
         if area == "open" and action == "list":
             account_no = parts[2] if len(parts) >= 3 and str(parts[2] or "").strip() else self._resolve_selected_account(user_id, chat_id)
             return self._show_open_orders(bot_token, user_id, chat_id, account_no, message_id)
         if area == "open" and action == "detail" and len(parts) >= 4:
             return self._show_open_order_detail(bot_token, user_id, chat_id, parts[2], parts[3], message_id)
+        if area == "cond" and action == "list":
+            return self._show_conditions(bot_token, user_id, chat_id, message_id)
+        if area == "cond" and action == "detail" and len(parts) >= 3:
+            return self._show_condition_detail(bot_token, user_id, chat_id, parts[2], message_id)
         if area == "trade" and action == "status":
             return self._show_trade_control(bot_token, user_id, chat_id, message_id)
         if area == "panic" and action == "menu":
@@ -182,8 +195,17 @@ class TradeControlTelegramManager(QObject):
 
     def _select_account(self, bot_token, user_id, chat_id, account_no, message_id=None):
         self.session_store.set_selected_account(user_id, chat_id, account_no)
-        self._log_action(user_id, chat_id, account_no, "select_account", "account", account_no, "success", "선택 계좌 변경")
+        self._log_action(user_id, chat_id, account_no, "select_account", "account", account_no, "success", "선택 계좌를 변경했습니다.")
         return self._show_account_detail(bot_token, user_id, chat_id, account_no, message_id)
+
+    def _show_holdings(self, bot_token, user_id, chat_id, account_no, message_id=None):
+        self.session_store.set_current_menu(user_id, chat_id, "holdings")
+        text, buttons = self.formatter.build_holdings(account_no, self.action_service.get_holdings(account_no))
+        return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+
+    def _show_holding_detail(self, bot_token, user_id, chat_id, account_no, code, message_id=None):
+        text, buttons = self.formatter.build_holding_detail(self.action_service.get_holding_detail(account_no, code))
+        return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
 
     def _show_open_orders(self, bot_token, user_id, chat_id, account_no, message_id=None):
         self.session_store.set_current_menu(user_id, chat_id, "open_orders")
@@ -192,6 +214,15 @@ class TradeControlTelegramManager(QObject):
 
     def _show_open_order_detail(self, bot_token, user_id, chat_id, account_no, order_no, message_id=None):
         text, buttons = self.formatter.build_open_order_detail(self.action_service.get_open_order_detail(account_no, order_no))
+        return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+
+    def _show_conditions(self, bot_token, user_id, chat_id, message_id=None):
+        self.session_store.set_current_menu(user_id, chat_id, "conditions")
+        text, buttons = self.formatter.build_conditions(self.action_service.get_condition_slots())
+        return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+
+    def _show_condition_detail(self, bot_token, user_id, chat_id, slot_no, message_id=None):
+        text, buttons = self.formatter.build_condition_detail(self.action_service.get_condition_slot_detail(slot_no))
         return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
 
     def _show_trade_control(self, bot_token, user_id, chat_id, message_id=None):
@@ -229,6 +260,33 @@ class TradeControlTelegramManager(QObject):
                 "tc|open|detail|{0}|{1}".format(account_no, order_no),
             )
             return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+        if action == "hold_sellall" and len(parts) >= 2:
+            account_no, code = parts[0], parts[1]
+            text, buttons = self.formatter.build_confirm(
+                "전량 매도",
+                "계좌 {0}\n종목 {1}\n전량 매도하시겠습니까?".format(account_no, code),
+                "tc|exec|hold_sellall|{0}|{1}".format(account_no, code),
+                "tc|hold|detail|{0}|{1}".format(account_no, code),
+            )
+            return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+        if action == "cond_toggle" and len(parts) >= 1:
+            slot_no = str(parts[0] or "")
+            text, buttons = self.formatter.build_confirm(
+                "조건식 활성 전환",
+                "슬롯 {0}의 활성 상태를 전환하시겠습니까?".format(slot_no),
+                "tc|exec|cond_toggle|{0}".format(slot_no),
+                "tc|cond|detail|{0}".format(slot_no),
+            )
+            return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
+        if action == "cond_restart" and len(parts) >= 1:
+            slot_no = str(parts[0] or "")
+            text, buttons = self.formatter.build_confirm(
+                "실시간 재등록",
+                "슬롯 {0}의 실시간 등록을 다시 요청하시겠습니까?".format(slot_no),
+                "tc|exec|cond_restart|{0}".format(slot_no),
+                "tc|cond|detail|{0}".format(slot_no),
+            )
+            return self._render(bot_token, user_id, chat_id, text, buttons, message_id)
         return False
 
     def _execute_action(self, bot_token, user_id, chat_id, action, parts, message_id=None):
@@ -258,7 +316,7 @@ class TradeControlTelegramManager(QObject):
             if result.get("message_id"):
                 self.session_store.set_last_message_id(user_id, chat_id, result.get("message_id"))
             return True
-        self.log_emitted.emit("⚠️ 매매 텔레그램 메시지 전송 실패: {0}".format(result.get("message", "")))
+        self.log_emitted.emit("텔레그램 매매관리 메시지 전송 실패: {0}".format(result.get("message", "")))
         return False
 
     def _log_action(self, user_id, chat_id, account_no, action_type, target_type, target_value, result, message):

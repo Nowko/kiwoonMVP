@@ -14,7 +14,7 @@ class TelegramService(object):
         return response.json()
 
     def get_me(self, bot_token):
-        bot_token = str(bot_token or '').strip()
+        bot_token = str(bot_token or "").strip()
         if not bot_token:
             return {"ok": False, "message": "Bot Token 미입력", "bot_name": "", "username": ""}
         url = "https://api.telegram.org/bot{0}/getMe".format(bot_token)
@@ -36,8 +36,8 @@ class TelegramService(object):
             return {"ok": False, "message": str(exc), "bot_name": "", "username": ""}
 
     def get_chat(self, bot_token, chat_id):
-        bot_token = str(bot_token or '').strip()
-        chat_id = str(chat_id or '').strip()
+        bot_token = str(bot_token or "").strip()
+        chat_id = str(chat_id or "").strip()
         if not bot_token:
             return {"ok": False, "message": "Bot Token 미입력", "chat_title": ""}
         if not chat_id:
@@ -57,8 +57,8 @@ class TelegramService(object):
             return {"ok": False, "message": str(exc), "chat_title": ""}
 
     def send_message(self, bot_token, chat_id, text, parse_mode="HTML", reply_markup=None):
-        bot_token = str(bot_token or '').strip()
-        chat_id = str(chat_id or '').strip()
+        bot_token = str(bot_token or "").strip()
+        chat_id = str(chat_id or "").strip()
         if not bot_token or not chat_id:
             return {"ok": False, "message": "missing token/chat_id"}
         url = "https://api.telegram.org/bot{0}/sendMessage".format(bot_token)
@@ -79,8 +79,8 @@ class TelegramService(object):
             return {"ok": False, "message": str(exc)}
 
     def edit_message(self, bot_token, chat_id, message_id, text, parse_mode="HTML", reply_markup=None):
-        bot_token = str(bot_token or '').strip()
-        chat_id = str(chat_id or '').strip()
+        bot_token = str(bot_token or "").strip()
+        chat_id = str(chat_id or "").strip()
         if not bot_token or not chat_id or not message_id:
             return {"ok": False, "message": "missing token/chat_id/message_id"}
         url = "https://api.telegram.org/bot{0}/editMessageText".format(bot_token)
@@ -102,8 +102,8 @@ class TelegramService(object):
             return {"ok": False, "message": str(exc)}
 
     def answer_callback_query(self, bot_token, callback_query_id, text=""):
-        bot_token = str(bot_token or '').strip()
-        callback_query_id = str(callback_query_id or '').strip()
+        bot_token = str(bot_token or "").strip()
+        callback_query_id = str(callback_query_id or "").strip()
         if not bot_token or not callback_query_id:
             return {"ok": False, "message": "missing token/callback_query_id"}
         url = "https://api.telegram.org/bot{0}/answerCallbackQuery".format(bot_token)
@@ -119,7 +119,7 @@ class TelegramService(object):
             return {"ok": False, "message": str(exc)}
 
     def get_updates(self, bot_token, offset=None, allowed_updates=None):
-        bot_token = str(bot_token or '').strip()
+        bot_token = str(bot_token or "").strip()
         if not bot_token:
             return {"ok": False, "message": "missing token", "updates": []}
         url = "https://api.telegram.org/bot{0}/getUpdates".format(bot_token)

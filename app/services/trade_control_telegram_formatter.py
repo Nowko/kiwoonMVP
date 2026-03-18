@@ -17,6 +17,7 @@ class TradeControlTelegramFormatter(object):
         ).format(selected_account_no or "-", "ON" if trade_enabled else "OFF")
         return text, self._markup([
             [self._btn("운영 현황", "tc|menu|status"), self._btn("계좌 선택", "tc|acct|list")],
+            [self._btn("보유 종목", "tc|hold|list|{0}".format(selected_account_no or "")), self._btn("조건식 관리", "tc|cond|list")],
             [self._btn("미체결 관리", "tc|open|list|{0}".format(selected_account_no or ""))],
             [self._btn("자동매매 제어", "tc|trade|status"), self._btn("긴급 정지", "tc|panic|menu")],
         ])
@@ -35,7 +36,8 @@ class TradeControlTelegramFormatter(object):
             "미체결: {open_order_count}"
         ).format(**summary)
         return text, self._markup([
-            [self._btn("전체 계좌 보기", "tc|acct|list"), self._btn("미체결 보기", "tc|open|list|{0}".format(summary.get("selected_account_no") or ""))],
+            [self._btn("전체 계좌 보기", "tc|acct|list"), self._btn("보유 종목", "tc|hold|list|{0}".format(summary.get("selected_account_no") or ""))],
+            [self._btn("미체결 보기", "tc|open|list|{0}".format(summary.get("selected_account_no") or "")), self._btn("조건식 관리", "tc|cond|list")],
             [self._btn("자동매매 제어", "tc|trade|status"), self._btn("메인 메뉴", "tc|menu|home")],
         ])
 
@@ -75,8 +77,41 @@ class TradeControlTelegramFormatter(object):
         ).format(selected_flag="예" if is_selected else "아니오", **row)
         return text, self._markup([
             [self._btn("이 계좌 선택", "tc|acct|select|{0}".format(row.get("account_no") or ""))],
-            [self._btn("미체결 보기", "tc|open|list|{0}".format(row.get("account_no") or ""))],
+            [self._btn("보유 종목 보기", "tc|hold|list|{0}".format(row.get("account_no") or "")), self._btn("미체결 보기", "tc|open|list|{0}".format(row.get("account_no") or ""))],
             [self._btn("계좌 목록", "tc|acct|list"), self._btn("메인 메뉴", "tc|menu|home")],
+        ])
+
+    def build_holdings(self, account_no, rows):
+        lines = ["[보유 종목]", "", "계좌: {0}".format(account_no or "-"), ""]
+        buttons = []
+        if not rows:
+            lines.append("보유 종목이 없습니다.")
+        for row in rows:
+            label = "{0} | {1}".format(
+                row.get("name") or row.get("code") or "-",
+                row.get("eval_profit_text") or "-",
+            )
+            buttons.append([self._btn(label, "tc|hold|detail|{0}|{1}".format(account_no, row.get("code") or ""))])
+        buttons.append([self._btn("메인 메뉴", "tc|menu|home")])
+        return "\n".join(lines), self._markup(buttons)
+
+    def build_holding_detail(self, row):
+        text = (
+            "[보유 종목 상세]\n\n"
+            "종목: {name} ({code})\n"
+            "수량: {qty}\n"
+            "평균가: {avg_price_text}\n"
+            "현재가: {current_price_text}\n"
+            "평가손익: {eval_profit_text}\n"
+            "수익률: {eval_rate_text}\n"
+            "매수전략: {buy_strategy_text}\n"
+            "매도전략: {sell_strategy_text}"
+        ).format(**row)
+        account_no = row.get("account_no") or ""
+        code = row.get("code") or ""
+        return text, self._markup([
+            [self._btn("전량 매도", "tc|confirm|hold_sellall|{0}|{1}".format(account_no, code))],
+            [self._btn("뒤로", "tc|hold|list|{0}".format(account_no))],
         ])
 
     def build_open_orders(self, account_no, rows):
@@ -126,6 +161,40 @@ class TradeControlTelegramFormatter(object):
             [self._btn("전체 매매 정지", "tc|confirm|panic_stop"), self._btn("정지 해제", "tc|confirm|panic_resume")],
             [self._btn("메인 메뉴", "tc|menu|home")],
         ])
+
+    def build_conditions(self, rows):
+        lines = ["[조건식 관리]", "", "슬롯을 선택하세요.", ""]
+        buttons = []
+        if not rows:
+            lines.append("등록된 조건식이 없습니다.")
+        for row in rows:
+            label = "{0}번 | {1} | 활성{2} 실시간{3}".format(
+                row.get("slot_no"),
+                row.get("condition_name") or "미지정",
+                "Y" if row.get("is_enabled") else "N",
+                "Y" if row.get("is_realtime") else "N",
+            )
+            buttons.append([self._btn(label, "tc|cond|detail|{0}".format(row.get("slot_no") or 0))])
+        buttons.append([self._btn("메인 메뉴", "tc|menu|home")])
+        return "\n".join(lines), self._markup(buttons)
+
+    def build_condition_detail(self, row):
+        text = (
+            "[조건식 상세]\n\n"
+            "슬롯: {slot_no}\n"
+            "조건식: {condition_name}\n"
+            "활성: {enabled_text}\n"
+            "실시간 등록: {realtime_text}\n"
+            "편입 종목 수: {current_count}\n\n"
+            "매수전략: {buy_strategy_text}\n"
+            "매도전략: {sell_strategy_text}"
+        ).format(**row)
+        slot_no = row.get("slot_no") or 0
+        buttons = [
+            [self._btn("활성 전환", "tc|confirm|cond_toggle|{0}".format(slot_no)), self._btn("실시간 재등록", "tc|confirm|cond_restart|{0}".format(slot_no))],
+            [self._btn("뒤로", "tc|cond|list"), self._btn("메인 메뉴", "tc|menu|home")],
+        ]
+        return text, self._markup(buttons)
 
     def build_confirm(self, title, body, confirm_callback, cancel_callback="tc|menu|home"):
         return "[확인]\n\n{0}\n\n{1}".format(title, body), self._markup([
