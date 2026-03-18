@@ -243,6 +243,46 @@ class PersistenceManager(object):
 
                 CREATE INDEX IF NOT EXISTS idx_daily_trade_review_items_date ON daily_trade_review_items(trade_date, account_no, row_type);
 
+                CREATE TABLE IF NOT EXISTS dart_event_cache (
+                    event_id TEXT PRIMARY KEY,
+                    code TEXT,
+                    corp_name TEXT,
+                    disclosure_date TEXT,
+                    report_name TEXT,
+                    event_type TEXT,
+                    sub_type TEXT,
+                    counterparty TEXT,
+                    fund_purpose TEXT,
+                    amount REAL DEFAULT 0,
+                    shares REAL DEFAULT 0,
+                    conversion_price REAL DEFAULT 0,
+                    refixing_flag INTEGER DEFAULT 0,
+                    listing_due_date TEXT DEFAULT '',
+                    source_url TEXT DEFAULT '',
+                    raw_json TEXT DEFAULT '{}',
+                    created_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_dart_event_cache_code_date ON dart_event_cache(code, disclosure_date DESC);
+                CREATE INDEX IF NOT EXISTS idx_dart_event_cache_type_date ON dart_event_cache(event_type, disclosure_date DESC);
+
+                CREATE TABLE IF NOT EXISTS stock_risk_signals (
+                    code TEXT PRIMARY KEY,
+                    trade_date TEXT,
+                    corp_name TEXT,
+                    mezzanine_flag INTEGER DEFAULT 0,
+                    dilution_flag INTEGER DEFAULT 0,
+                    overhang_flag INTEGER DEFAULT 0,
+                    association_flag INTEGER DEFAULT 0,
+                    control_change_flag INTEGER DEFAULT 0,
+                    warning_level TEXT DEFAULT '',
+                    warning_score REAL DEFAULT 0,
+                    warning_summary TEXT DEFAULT '',
+                    evidence_json TEXT DEFAULT '[]',
+                    extra_json TEXT DEFAULT '{}',
+                    updated_at TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS naver_api_keys (
                     key_set_id INTEGER PRIMARY KEY,
                     client_id TEXT,
