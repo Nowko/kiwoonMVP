@@ -52,6 +52,9 @@ class DartSignalService(object):
             "conversion_price": self._extract_conversion_price(data, detail_fields=detail_fields),
             "refixing_flag": 1 if (event_type == "conversion_price_adjustment" or int(detail_fields.get("refixing_flag", 0) or 0)) else 0,
             "listing_due_date": self._extract_listing_due_date(data, detail_fields=detail_fields),
+            "exercise_date": str(detail_fields.get("exercise_date", "") or ""),
+            "private_flag": 1 if int(detail_fields.get("private_flag", 0) or 0) else 0,
+            "detail_association_flag": 1 if int(detail_fields.get("association_flag", 0) or 0) else 0,
             "detail_excerpt": str(data.get("detail_excerpt", "") or detail_fields.get("excerpt", "") or ""),
             "source_url": str(data.get("source_url", "") or ""),
             "raw_json": dict(data.get("raw_json") or data or {}),
@@ -73,50 +76,54 @@ class DartSignalService(object):
             event_type = str(event.get("event_type", "") or "")
             event_counts[event_type] = int(event_counts.get(event_type, 0)) + 1
             counterparty = str(event.get("counterparty", "") or "")
-            report_name = str(event.get("report_name", "") or "")
             date_label = str(event.get("disclosure_date", "") or "")
             excerpt = str(event.get("detail_excerpt", "") or "")
+            event_line = self._build_event_evidence(event)
 
             if event_type == "cb_issue":
                 score += 20
                 tags["mezzanine_flag"] = 1
-                evidence.append(self._evidence_line(date_label, u"CB 발행 공시", excerpt))
+                evidence.append(event_line)
             elif event_type == "bw_issue":
                 score += 22
                 tags["mezzanine_flag"] = 1
-                evidence.append(self._evidence_line(date_label, u"BW 발행 공시", excerpt))
+                evidence.append(event_line)
             elif event_type == "eb_issue":
                 score += 18
                 tags["mezzanine_flag"] = 1
-                evidence.append(self._evidence_line(date_label, u"EB 발행 공시", excerpt))
+                evidence.append(event_line)
             elif event_type == "third_party_allocation":
                 score += 20
                 tags["dilution_flag"] = 1
-                evidence.append(self._evidence_line(date_label, u"제3자배정 유상증자 공시", excerpt))
+                evidence.append(event_line)
             elif event_type in ["conversion_exercise", "bw_exercise"]:
                 score += 18
                 tags["dilution_flag"] = 1
                 tags["overhang_flag"] = 1
-                evidence.append(self._evidence_line(date_label, u"전환/행사 공시", excerpt))
+                evidence.append(event_line)
             elif event_type == "conversion_price_adjustment":
                 score += 20
                 tags["mezzanine_flag"] = 1
                 tags["dilution_flag"] = 1
-                evidence.append(self._evidence_line(date_label, u"전환가액 조정 공시", excerpt))
+                evidence.append(event_line)
             elif event_type == "new_share_listing":
                 score += 15
                 tags["overhang_flag"] = 1
-                evidence.append(self._evidence_line(date_label, u"신주 상장 관련 공시", excerpt))
+                evidence.append(event_line)
             elif event_type in ["major_shareholder_change", "largest_shareholder_change"]:
                 score += 12
                 tags["control_change_flag"] = 1
-                evidence.append(self._evidence_line(date_label, u"지배구조 변경 관련 공시", excerpt))
+                evidence.append(event_line)
 
-            if self._has_association(counterparty):
+            if self._has_association(counterparty) or int(event.get("detail_association_flag", 0) or 0):
                 score += 15
                 tags["association_flag"] = 1
                 if counterparty:
                     evidence.append(u"상대방에 {0} 성격 명칭 포함".format(counterparty))
+            if int(event.get("private_flag", 0) or 0):
+                score += 8
+                tags["mezzanine_flag"] = 1
+                evidence.append(u"사모 방식 자금조달 문구가 확인됩니다.")
 
         if event_counts.get("cb_issue", 0) >= 1 and event_counts.get("conversion_price_adjustment", 0) >= 1:
             score += 15
@@ -306,6 +313,91 @@ class DartSignalService(object):
         if excerpt:
             return u"{0}: {1}".format(prefix, excerpt[:180])
         return prefix
+
+    def _build_event_evidence(self, event):
+        event_type = str(event.get("event_type", "") or "")
+        date_label = str(event.get("disclosure_date", "") or "")
+        counterparty = str(event.get("counterparty", "") or "")
+        amount = self._fmt_num(event.get("amount"))
+        shares = self._fmt_num(event.get("shares"))
+        conversion_price = self._fmt_num(event.get("conversion_price"))
+        listing_due_date = str(event.get("listing_due_date", "") or "")
+        exercise_date = str(event.get("exercise_date", "") or "")
+        excerpt = str(event.get("detail_excerpt", "") or "").strip()
+
+        if event_type == "cb_issue":
+            parts = [u"CB 발행"]
+            if counterparty:
+                parts.append(u"상대방 {0}".format(counterparty))
+            if amount:
+                parts.append(u"발행금액 {0}".format(amount))
+            if conversion_price:
+                parts.append(u"전환가액 {0}".format(conversion_price))
+            return self._compose_evidence_line(date_label, parts, excerpt)
+        if event_type == "bw_issue":
+            parts = [u"BW 발행"]
+            if counterparty:
+                parts.append(u"상대방 {0}".format(counterparty))
+            if amount:
+                parts.append(u"발행금액 {0}".format(amount))
+            return self._compose_evidence_line(date_label, parts, excerpt)
+        if event_type == "eb_issue":
+            parts = [u"EB 발행"]
+            if counterparty:
+                parts.append(u"상대방 {0}".format(counterparty))
+            if amount:
+                parts.append(u"발행금액 {0}".format(amount))
+            return self._compose_evidence_line(date_label, parts, excerpt)
+        if event_type == "third_party_allocation":
+            parts = [u"제3자배정 유상증자"]
+            if counterparty:
+                parts.append(u"배정대상 {0}".format(counterparty))
+            if amount:
+                parts.append(u"증자금액 {0}".format(amount))
+            if shares:
+                parts.append(u"주식수 {0}".format(shares))
+            return self._compose_evidence_line(date_label, parts, excerpt)
+        if event_type in ["conversion_exercise", "bw_exercise"]:
+            parts = [u"전환/행사 공시"]
+            if shares:
+                parts.append(u"주식수 {0}".format(shares))
+            if listing_due_date:
+                parts.append(u"상장예정 {0}".format(listing_due_date))
+            if exercise_date:
+                parts.append(u"청구일 {0}".format(exercise_date))
+            return self._compose_evidence_line(date_label, parts, excerpt)
+        if event_type == "conversion_price_adjustment":
+            parts = [u"전환가액 조정"]
+            if conversion_price:
+                parts.append(u"조정가액 {0}".format(conversion_price))
+            return self._compose_evidence_line(date_label, parts, excerpt)
+        if event_type == "new_share_listing":
+            parts = [u"신주 상장 관련"]
+            if shares:
+                parts.append(u"주식수 {0}".format(shares))
+            if listing_due_date:
+                parts.append(u"상장예정 {0}".format(listing_due_date))
+            return self._compose_evidence_line(date_label, parts, excerpt)
+        if event_type in ["major_shareholder_change", "largest_shareholder_change"]:
+            parts = [u"지배구조 변경 관련"]
+            if counterparty:
+                parts.append(u"관련주체 {0}".format(counterparty))
+            return self._compose_evidence_line(date_label, parts, excerpt)
+        return self._evidence_line(date_label, str(event.get("report_name", "") or ""), excerpt)
+
+    def _compose_evidence_line(self, date_label, parts, excerpt):
+        parts = [str(part).strip() for part in list(parts or []) if str(part).strip()]
+        label = u" / ".join(parts)
+        return self._evidence_line(date_label, label, excerpt)
+
+    def _fmt_num(self, value):
+        try:
+            number = float(value or 0)
+        except Exception:
+            return ""
+        if number <= 0:
+            return ""
+        return "{0:,.0f}".format(number)
 
     def _extract_number(self, raw, keys):
         for key in keys:

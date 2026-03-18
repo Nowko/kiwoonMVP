@@ -293,9 +293,12 @@ class DartApiService(object):
             "shares": self._extract_number_after_label(text, [u"발행주식수", u"주식수", u"전환청구주식수", u"교부주식수"]),
             "conversion_price": self._extract_number_after_label(text, [u"전환가액", u"행사가액", u"전환가격"]),
             "listing_due_date": self._extract_date_after_label(text, [u"상장예정일", u"신주상장예정일", u"교부예정일"]),
+            "exercise_date": self._extract_date_after_label(text, [u"전환청구기간", u"전환청구일", u"행사일", u"청구일"]),
             "fund_purpose": self._extract_fund_purpose(text),
             "excerpt": self._extract_excerpt(text),
             "refixing_flag": self._has_refixing_signal(text),
+            "private_flag": self._has_private_signal(text),
+            "association_flag": self._has_association_signal(text),
         }
 
     def _extract_line_value(self, text, labels):
@@ -351,6 +354,17 @@ class DartApiService(object):
     def _has_refixing_signal(self, text):
         text = str(text or "")
         return (u"전환가액의 조정" in text) or (u"전환가액 조정" in text) or (u"리픽싱" in text)
+
+    def _has_private_signal(self, text):
+        text = str(text or "")
+        return (u"사모" in text) or (u"사모방식" in text)
+
+    def _has_association_signal(self, text):
+        text = str(text or "")
+        for keyword in [u"투자조합", u"조합", u"사모", u"파트너스", "PE", u"신기술조합"]:
+            if keyword.lower() in text.lower():
+                return True
+        return False
 
     def _parse_ts(self, value):
         text = str(value or "").strip()
