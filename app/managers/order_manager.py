@@ -468,7 +468,7 @@ class OrderManager(QObject):
         strategy_text = self._resolve_strategy_text_for_review(cycle=cycle, active_state=active_state)
         qty = int(position_row.get("qty") or 0)
         ref_price = float(position_row.get("current_price") or 0.0)
-        eval_amount = ref_price * max(0, qty)
+        eval_profit = float(position_row.get("eval_profit") or 0.0)
         cycle_extra = self._load_cycle_extra(cycle)
         entry_market_metrics = self._merge_entry_market_metrics(
             cycle_extra.get("entry_market_metrics"),
@@ -491,9 +491,9 @@ class OrderManager(QObject):
             "name": str(position_row.get("name") or code),
             "avg_price": float(position_row.get("avg_price") or 0.0),
             "ref_price": ref_price,
-            "eval_profit": eval_amount,
+            "eval_profit": eval_profit,
             "realized_profit": 0.0,
-            "contribution_profit": eval_amount,
+            "contribution_profit": eval_profit,
             "strategy_text": strategy_text,
             "condition_name": condition_name,
             "cycle_id": str(cycle.get("cycle_id") or ""),
@@ -596,7 +596,16 @@ class OrderManager(QObject):
             for row in sold_rows:
                 items.append(self._build_daily_review_sold_item(account_no, row, snapshot_ts, trade_date))
             holding_eval_total = sum([float(item.get("eval_profit") or 0.0) for item in items if str(item.get("row_type") or "") == "holding_eod"])
-            realized_profit_total = sum([float(item.get("realized_profit") or 0.0) for item in items if str(item.get("row_type") or "") == "sold_today"])
+            account_cash = self._get_account_cash_settings(account_no)
+            api_total_profit = float(account_cash.get("api_total_profit", 0.0) or 0.0)
+            api_realized_profit = float(account_cash.get("api_realized_profit", 0.0) or 0.0)
+            sold_realized_total = sum([float(item.get("realized_profit") or 0.0) for item in items if str(item.get("row_type") or "") == "sold_today"])
+            if api_realized_profit != 0:
+                realized_profit_total = api_realized_profit
+            elif api_total_profit != 0:
+                realized_profit_total = api_total_profit - holding_eval_total
+            else:
+                realized_profit_total = sold_realized_total
             total_pnl = holding_eval_total + realized_profit_total
             self.persistence.execute(
                 """

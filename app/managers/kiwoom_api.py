@@ -1523,7 +1523,7 @@ class KiwoomApiClient(QObject):
         api_total_buy = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총매입금액", "총매입", "매입금액합계"]))
         api_total_eval = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가금액", "총자산", "예탁자산평가액", "추정예탁자산"]))
         api_total_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가손익금액", "총손익금액", "총평가손익", "평가손익합계"]))
-        api_realized_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["실현손익", "실현손익금액", "당일실현손익"]))
+        api_realized_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["실현손익", "실현손익금액", "당일실현손익", "실현손익합계", "당일매도손익", "금일매도손익", "당일손익금액", "당일손익"]))
         return {
             "deposit_cash": deposit_cash,
             "orderable_cash": orderable_cash,
@@ -1541,7 +1541,7 @@ class KiwoomApiClient(QObject):
         api_total_buy = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총매입금액", "총매입", "매입금액합계"]))
         api_total_eval = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가금액", "총자산", "예탁자산평가액", "추정예탁자산"]))
         api_total_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가손익금액", "총손익금액", "총평가손익", "평가손익합계"]))
-        api_realized_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["실현손익", "실현손익금액", "당일실현손익"]))
+        api_realized_profit = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["실현손익", "실현손익금액", "당일실현손익", "실현손익합계", "당일매도손익", "금일매도손익", "당일손익금액", "당일손익"]))
         return {
             "deposit_cash": deposit_cash,
             "orderable_cash": orderable_cash,

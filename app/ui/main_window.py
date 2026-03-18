@@ -5258,52 +5258,11 @@ class MainWindow(QMainWindow):
                 current_price = 0.0
             info["total_buy"] += avg_price * qty
             info["total_eval"] += current_price * qty
-            profit_info = self._estimate_hts_profit_view(avg_price, current_price, qty)
-            info["eval_profit_total"] += float(profit_info.get("profit_amount") or 0.0)
+            try:
+                info["eval_profit_total"] += float(state.get("eval_profit") or 0.0)
+            except Exception:
+                pass
         return summary_map
-
-    def _estimate_hts_fee_tax(self, buy_amount, sell_amount):
-        buy_amount = max(0.0, float(buy_amount or 0.0))
-        sell_amount = max(0.0, float(sell_amount or 0.0))
-        commission_rate = 0.00179
-        tax_rate = 0.00200
-        buy_fee = int(buy_amount * commission_rate)
-        sell_fee = int(sell_amount * commission_rate)
-        sell_tax = int(sell_amount * tax_rate)
-        return {
-            "buy_fee": float(buy_fee),
-            "sell_fee": float(sell_fee),
-            "sell_tax": float(sell_tax),
-            "total_fee_tax": float(buy_fee + sell_fee + sell_tax),
-        }
-
-    def _estimate_hts_profit_view(self, avg_price, current_price, qty):
-        try:
-            qty = int(qty or 0)
-        except Exception:
-            qty = 0
-        try:
-            avg_price = float(avg_price or 0.0)
-        except Exception:
-            avg_price = 0.0
-        try:
-            current_price = float(current_price or 0.0)
-        except Exception:
-            current_price = 0.0
-        if qty <= 0 or avg_price <= 0 or current_price <= 0:
-            return {"buy_amount": 0.0, "eval_amount": 0.0, "profit_amount": 0.0, "profit_rate": 0.0, "fee_tax_total": 0.0}
-        buy_amount = avg_price * qty
-        eval_amount = current_price * qty
-        fee_info = self._estimate_hts_fee_tax(buy_amount, eval_amount)
-        profit_amount = eval_amount - buy_amount - float(fee_info.get("total_fee_tax") or 0.0)
-        profit_rate = (profit_amount / buy_amount * 100.0) if buy_amount > 0 else 0.0
-        return {
-            "buy_amount": buy_amount,
-            "eval_amount": eval_amount,
-            "profit_amount": profit_amount,
-            "profit_rate": profit_rate,
-            "fee_tax_total": float(fee_info.get("total_fee_tax") or 0.0),
-        }
 
     def _build_policy_detail_text(self, extra):
         parts = []
@@ -5473,10 +5432,10 @@ class MainWindow(QMainWindow):
             holding_profit_total = float(live_summary.get("eval_profit_total", 0.0) or 0.0)
             summary_realized_profit = float(row["realized_profit_total"] or 0)
             cycle_realized_profit = float(cycle_realized_map.get(account_no, 0.0) or 0.0)
-            if api_total_profit != 0:
-                realized_profit_total = api_total_profit - holding_profit_total
-            elif api_realized_profit != 0:
+            if api_realized_profit != 0:
                 realized_profit_total = api_realized_profit
+            elif api_total_profit != 0:
+                realized_profit_total = api_total_profit - holding_profit_total
             elif summary_realized_profit != 0:
                 realized_profit_total = summary_realized_profit
             else:
@@ -5498,7 +5457,6 @@ class MainWindow(QMainWindow):
         self.table_positions.setRowCount(len(position_states))
         for row_index, state in enumerate(position_states):
             account_no = str(state.get("account_no") or "")
-            profit_view = self._estimate_hts_profit_view(state.get("avg_price"), state.get("current_price"), state.get("qty"))
             self.table_positions.setItem(
                 row_index,
                 0,
@@ -5508,8 +5466,8 @@ class MainWindow(QMainWindow):
             self.table_positions.setItem(row_index, 2, self._make_table_item(str(state.get("code") or "")))
             self.table_positions.setItem(row_index, 3, self._make_number_item(state.get("avg_price")))
             self.table_positions.setItem(row_index, 4, self._make_number_item(state.get("current_price")))
-            self.table_positions.setItem(row_index, 5, self._make_number_item(profit_view.get("profit_amount"), signed=True))
-            self.table_positions.setItem(row_index, 6, self._make_number_item(profit_view.get("profit_rate"), digits=2, rate=True, signed=True))
+            self.table_positions.setItem(row_index, 5, self._make_number_item(state.get("eval_profit"), signed=True))
+            self.table_positions.setItem(row_index, 6, self._make_number_item(state.get("eval_rate"), digits=2, rate=True, signed=True))
             self.table_positions.setItem(row_index, 7, self._make_number_item(int(state.get("qty") or 0)))
             self.table_positions.setItem(row_index, 8, self._make_table_item(self._build_position_strategy_text(state)))
             self.table_positions.setItem(row_index, 9, self._make_table_item(self._build_position_news_status_text(state)))
