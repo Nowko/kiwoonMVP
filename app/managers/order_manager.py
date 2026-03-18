@@ -29,6 +29,8 @@ class OrderManager(QObject):
             self.kiwoom_client.account_cash_received.connect(self._on_account_cash_received)
         if hasattr(self.kiwoom_client, "account_positions_received"):
             self.kiwoom_client.account_positions_received.connect(self._on_account_positions_received)
+        if hasattr(self.kiwoom_client, "account_realized_received"):
+            self.kiwoom_client.account_realized_received.connect(self._on_account_realized_received)
         if hasattr(self.kiwoom_client, "outstanding_orders_received"):
             self.kiwoom_client.outstanding_orders_received.connect(self._on_outstanding_orders_received)
         if hasattr(self.kiwoom_client, "real_price_received"):
@@ -1717,6 +1719,27 @@ class OrderManager(QObject):
                 account_no,
                 deposit_cash,
                 orderable_cash,
+            )
+        )
+
+    def _on_account_realized_received(self, payload):
+        account_no = str(payload.get("account_no", "") or "").strip()
+        summary = dict(payload.get("summary") or {})
+        if not account_no:
+            return
+        api_realized_profit = float(summary.get("api_realized_profit") or 0.0)
+        self.account_manager.set_account_live_settings(
+            account_no,
+            api_realized_profit=api_realized_profit,
+            emit_signal=False,
+        )
+        self.save_daily_review_snapshot()
+        self.summaries_changed.emit()
+        self.log_emitted.emit(
+            "💹 계좌 실현손익 반영: {0} / 실현손익={1} / field={2}".format(
+                account_no,
+                api_realized_profit,
+                str(summary.get("matched_field") or "-"),
             )
         )
 

@@ -20,6 +20,7 @@ class KiwoomApiClient(QObject):
     api_message_received = pyqtSignal(dict)
     account_cash_received = pyqtSignal(dict)
     account_positions_received = pyqtSignal(dict)
+    account_realized_received = pyqtSignal(dict)
     outstanding_orders_received = pyqtSignal(dict)
     account_sync_finished = pyqtSignal(dict)
     real_price_received = pyqtSignal(dict)
@@ -1199,6 +1200,28 @@ class KiwoomApiClient(QObject):
         }
         return self.comm_rq_data(rq_name, "opt10075", int(prev_next), screen_no)
 
+    def request_account_daily_realized(self, account_no, prev_next=0, screen_no="6003", password="", password_mode="api_saved", trade_date=""):
+        if not self.connected:
+            self.log_emitted.emit("⚠️ 미연결 상태라 일자별실현손익 조회를 생략합니다")
+            return False
+        trade_date = str(trade_date or datetime.datetime.now().strftime("%Y%m%d"))
+        rq_name = "SYNC_REALIZED_{0}".format(str(account_no)[-4:])
+        self.set_input_value("계좌번호", account_no)
+        self.set_input_value("비밀번호", password or "")
+        self.set_input_value("비밀번호입력매체구분", "00")
+        self.set_input_value("시작일자", trade_date)
+        self.set_input_value("종료일자", trade_date)
+        self._rq_context_map[rq_name] = {
+            "type": "realized",
+            "account_no": str(account_no),
+            "tr_code": "opt10074",
+            "screen_no": str(screen_no),
+            "password_mode": str(password_mode or "api_saved"),
+            "password": password or "",
+            "trade_date": trade_date,
+        }
+        return self.comm_rq_data(rq_name, "opt10074", int(prev_next), screen_no)
+
     def is_account_sync_busy(self):
         return (self._current_sync_context is not None) or bool(self._account_sync_queue)
 
@@ -1235,21 +1258,28 @@ class KiwoomApiClient(QObject):
             self._account_sync_queue.append({
                 "type": "cash",
                 "account_no": account_no,
-                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 3) + 1),
+                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 1),
                 "password_mode": password_mode,
                 "password": password,
             })
             self._account_sync_queue.append({
                 "type": "balance",
                 "account_no": account_no,
-                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 3) + 2),
+                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 2),
+                "password_mode": password_mode,
+                "password": password,
+            })
+            self._account_sync_queue.append({
+                "type": "realized",
+                "account_no": account_no,
+                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 3),
                 "password_mode": password_mode,
                 "password": password,
             })
             self._account_sync_queue.append({
                 "type": "outstanding",
                 "account_no": account_no,
-                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 3) + 3),
+                "screen_no": "{0}{1:02d}".format(self._sync_screen_prefix, (idx * 4) + 4),
                 "password_mode": password_mode,
             })
         self._current_sync_context = None
@@ -1270,6 +1300,8 @@ class KiwoomApiClient(QObject):
             ok = self.request_account_cash(context["account_no"], 0, context["screen_no"], context.get("password", ""), context.get("password_mode", "api_saved"))
         elif context["type"] == "balance":
             ok = self.request_account_balance(context["account_no"], 0, context["screen_no"], context.get("password", ""), context.get("password_mode", "api_saved"))
+        elif context["type"] == "realized":
+            ok = self.request_account_daily_realized(context["account_no"], 0, context["screen_no"], context.get("password", ""), context.get("password_mode", "api_saved"))
         else:
             ok = self.request_outstanding_orders(context["account_no"], 0, context["screen_no"])
         if not ok:
@@ -1282,6 +1314,8 @@ class KiwoomApiClient(QObject):
             ok = self.request_account_cash(context["account_no"], prev_next, context["screen_no"], context.get("password", ""), context.get("password_mode", "api_saved"))
         elif context["type"] == "balance":
             ok = self.request_account_balance(context["account_no"], prev_next, context["screen_no"], context.get("password", ""), context.get("password_mode", "api_saved"))
+        elif context["type"] == "realized":
+            ok = self.request_account_daily_realized(context["account_no"], prev_next, context["screen_no"], context.get("password", ""), context.get("password_mode", "api_saved"), context.get("trade_date", ""))
         else:
             ok = self.request_outstanding_orders(context["account_no"], prev_next, context["screen_no"])
         if not ok:
@@ -1402,6 +1436,20 @@ class KiwoomApiClient(QObject):
                 }
                 self.account_positions_received.emit(payload)
                 self.log_emitted.emit("📊 계좌평가잔고 수신: {0} / {1}건 / next={2}".format(payload["account_no"], len(rows), payload["prev_next"] or "0"))
+            elif ctx_type == "realized":
+                summary = self._parse_daily_realized_summary(str(tr_code), str(rq_name))
+                payload = {
+                    "screen_no": str(screen_no),
+                    "rq_name": str(rq_name),
+                    "tr_code": str(tr_code),
+                    "record_name": str(record_name),
+                    "prev_next": str(prev_next).strip(),
+                    "account_no": context.get("account_no", ""),
+                    "summary": summary,
+                    "message": str(message or ""),
+                }
+                self.account_realized_received.emit(payload)
+                self.log_emitted.emit("💹 일자별실현손익 수신: {0} / 실현손익={1} / field={2} / rows={3}".format(payload["account_no"], summary.get("api_realized_profit", 0), summary.get("matched_field", "-"), summary.get("row_count", 0)))
             elif ctx_type == "outstanding":
                 rows = self._parse_outstanding_rows(str(tr_code), str(rq_name))
                 payload = {
@@ -1577,6 +1625,33 @@ class KiwoomApiClient(QObject):
                 "eval_rate": eval_rate,
             })
         return rows
+
+    def _parse_daily_realized_summary(self, tr_code, rq_name):
+        item_names = [
+            "실현손익",
+            "실현손익금액",
+            "당일실현손익",
+            "실현손익합계",
+            "당일매도손익",
+            "금일매도손익",
+            "당일손익금액",
+            "당일손익",
+        ]
+        matched_field, matched_value = self.get_comm_data_first_match(tr_code, rq_name, 0, item_names)
+        realized_total = self._to_float(matched_value)
+        row_count = self.get_repeat_cnt(tr_code, rq_name)
+        if realized_total == 0 and row_count > 0:
+            realized_total = 0.0
+            for index in range(row_count):
+                row_field, row_value = self.get_comm_data_first_match(tr_code, rq_name, index, item_names)
+                if row_field and not matched_field:
+                    matched_field = row_field
+                realized_total += self._to_float(row_value)
+        return {
+            "api_realized_profit": realized_total,
+            "matched_field": matched_field or "",
+            "row_count": row_count,
+        }
 
     def _parse_outstanding_rows(self, tr_code, rq_name):
         rows = []
