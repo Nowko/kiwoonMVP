@@ -196,7 +196,7 @@ class MainWindow(QMainWindow):
         self._analysis_monitor_refresh_running = False
         self._analysis_monitor_refresh_rows = []
         self._analysis_monitor_refresh_index = 0
-        self._analysis_monitor_max_rows = 200
+        self._analysis_monitor_max_rows = 100
         self._analysis_monitor_batch_size = 40
         self._refresh_analysis_monitor_timer = QTimer(self)
         self._refresh_analysis_monitor_timer.setSingleShot(True)
@@ -1393,8 +1393,8 @@ class MainWindow(QMainWindow):
         self.right_tabs.addTab(self._build_scope_tab(), "전략별 분석")
         self.right_tabs.addTab(self._build_operations_tab(), "운영")
         self.right_tabs.addTab(self._build_news_watch_tab(), "뉴스감시")
-        self.right_tabs.addTab(self._build_analysis_monitor_tab(), "실시간 분석")
-        self.right_tabs.addTab(self._build_spam_tab(), "스팸 관리")
+        self.right_tabs.addTab(self._build_analysis_monitor_tab(), "검색포착")
+        self.right_tabs.addTab(self._build_spam_tab(), "스팸")
         self.right_tabs.addTab(self._build_log_tab(), "로그")
         return self.right_tabs
 
@@ -1430,6 +1430,22 @@ class MainWindow(QMainWindow):
         self.table_analysis_monitor.setAlternatingRowColors(True)
         layout.addWidget(self.table_analysis_monitor)
         return widget
+
+    def _normalize_ui_texts(self):
+        if hasattr(self, "right_tabs"):
+            tab_texts = [
+                "실시간 참고값",
+                "전략 상세",
+                "전략별 분석",
+                "운영",
+                "뉴스감시",
+                "검색포착",
+                "스팸",
+                "로그",
+            ]
+            for index, text in enumerate(tab_texts):
+                if self.right_tabs.count() > index:
+                    self.right_tabs.setTabText(index, text)
 
     def _create_policy_slot_tab(self, policy_key, condition_label):
         widget = QWidget(self)
@@ -2869,7 +2885,6 @@ class MainWindow(QMainWindow):
         self.pipeline_manager.pipeline_changed.connect(self._schedule_refresh_news_watch)
         self.pipeline_manager.pipeline_changed.connect(self._schedule_refresh_operations)
         self.pipeline_manager.pipeline_changed.connect(self._schedule_refresh_policy_logs)
-        self.pipeline_manager.pipeline_changed.connect(self._on_analysis_monitor_pipeline_changed)
         self.right_tabs.currentChanged.connect(self._on_right_tab_changed)
         self.strategy_policy_tabs.currentChanged.connect(self._schedule_refresh_realtime_strategy_reference_labels)
         manager = getattr(self.strategy_manager, "realtime_market_state_manager", None)
@@ -5665,16 +5680,6 @@ class MainWindow(QMainWindow):
 
     def _analysis_monitor_price_value(self, code, fallback_price=0.0):
         try:
-            snapshot = dict(self.strategy_manager.get_realtime_market_snapshot(code) or {})
-        except Exception:
-            snapshot = {}
-        try:
-            current_price = float(snapshot.get("current_price") or 0.0)
-        except Exception:
-            current_price = 0.0
-        if current_price > 0:
-            return current_price
-        try:
             return float(fallback_price or 0.0)
         except Exception:
             return 0.0
@@ -5768,33 +5773,6 @@ class MainWindow(QMainWindow):
         self._populate_analysis_monitor_row(current_rows, row_data)
         table.scrollToBottom()
 
-    def _refresh_analysis_monitor_visible_rows(self):
-        table = getattr(self, "table_analysis_monitor", None)
-        if table is None:
-            return
-        row_count = table.rowCount()
-        for row_index in range(row_count):
-            code_item = table.item(row_index, 2)
-            if code_item is None:
-                continue
-            code = str(code_item.data(Qt.UserRole) or code_item.text() or "").strip()
-            if not code:
-                continue
-            symbol_row = self.persistence.fetchone(
-                "SELECT current_state, detected_price FROM tracked_symbols WHERE code=?",
-                (code,),
-            )
-            current_state = symbol_row["current_state"] if symbol_row else ""
-            detected_price = symbol_row["detected_price"] if symbol_row else 0.0
-            current_price = self._analysis_monitor_price_value(code, detected_price)
-            price_text = "{0:,.0f}".format(current_price) if current_price > 0 else "-"
-            result_item = table.item(row_index, 4)
-            if result_item is not None:
-                result_item.setText(self._translate_analysis_monitor_result(current_state))
-            price_item = table.item(row_index, 3)
-            if price_item is not None:
-                price_item.setText(price_text)
-
     def refresh_analysis_monitor(self):
         if not self._is_analysis_monitor_tab_active():
             self._analysis_monitor_refresh_pending = True
@@ -5875,13 +5853,7 @@ class MainWindow(QMainWindow):
         self._append_analysis_monitor_row(row_data)
 
     def _on_analysis_monitor_pipeline_changed(self):
-        if self._analysis_monitor_refresh_running:
-            self._analysis_monitor_refresh_pending = True
-            return
-        if not self._is_analysis_monitor_tab_active():
-            self._analysis_monitor_refresh_pending = True
-            return
-        self._refresh_analysis_monitor_visible_rows()
+        return
 
     def _on_right_tab_changed(self, index):
         current_widget = self.right_tabs.widget(int(index)) if hasattr(self, "right_tabs") else None
