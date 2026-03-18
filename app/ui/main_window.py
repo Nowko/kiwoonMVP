@@ -5390,6 +5390,16 @@ class MainWindow(QMainWindow):
         )
         position_states = self._build_position_rows_for_operations()
         live_summary_map = self._build_live_account_summary_map(position_states)
+        cycle_realized_map = {}
+        for cycle_row in self.persistence.fetchall(
+            """
+            SELECT account_no, COALESCE(SUM(pnl_realized), 0) AS realized_sum
+            FROM trade_cycles
+            WHERE status IN ('CLOSED', 'SIMULATED_CLOSED')
+            GROUP BY account_no
+            """
+        ):
+            cycle_realized_map[str(cycle_row["account_no"] or "")] = float(cycle_row["realized_sum"] or 0.0)
         account_settings_map = {}
         for row in self.account_manager.get_accounts():
             account_no = str(row.get("account_no") or "")
@@ -5419,7 +5429,14 @@ class MainWindow(QMainWindow):
             total_buy = api_total_buy if api_total_buy > 0 else float(live_summary.get("total_buy", 0.0) or 0.0)
             total_eval = api_total_eval if api_total_eval > 0 else float(live_summary.get("total_eval", 0.0) or 0.0)
             total_profit = api_total_profit if api_total_profit != 0 else float(row["eval_profit_total"] or 0)
-            realized_profit_total = api_realized_profit if api_realized_profit != 0 else float(row["realized_profit_total"] or 0)
+            summary_realized_profit = float(row["realized_profit_total"] or 0)
+            cycle_realized_profit = float(cycle_realized_map.get(account_no, 0.0) or 0.0)
+            if api_realized_profit != 0:
+                realized_profit_total = api_realized_profit
+            elif summary_realized_profit != 0:
+                realized_profit_total = summary_realized_profit
+            else:
+                realized_profit_total = cycle_realized_profit
             self.table_accounts_summary.setItem(
                 row_index,
                 0,
