@@ -2724,8 +2724,8 @@ class MainWindow(QMainWindow):
         self.btn_operations_refresh = QPushButton("재조회")
         top_row.addWidget(self.btn_operations_refresh)
         layout.addLayout(top_row)
-        self.table_accounts_summary = QTableWidget(0, 8)
-        self.table_accounts_summary.setHorizontalHeaderLabels(["계좌", "예수금", "주문 가능 현금", "보유종목 수", "총매입", "총평가", "총손익", "실현손익"])
+        self.table_accounts_summary = QTableWidget(0, 9)
+        self.table_accounts_summary.setHorizontalHeaderLabels(["계좌", "예수금", "주문 가능 현금", "추정자산", "보유종목 수", "총매입", "총평가", "총손익", "실현손익"])
         self.table_accounts_summary.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_accounts_summary.setEditTriggers(QAbstractItemView.NoEditTriggers)
         layout.addWidget(self.table_accounts_summary)
@@ -5518,6 +5518,7 @@ class MainWindow(QMainWindow):
             account_settings_map[account_no] = {
                 "deposit_cash": float(settings.get("deposit_cash", 0.0) or 0.0),
                 "orderable_cash": float(settings.get("orderable_cash", 0.0) or 0.0),
+                "estimated_assets": float(settings.get("estimated_assets", 0.0) or 0.0),
                 "api_total_buy": float(settings.get("api_total_buy", 0.0) or 0.0),
                 "api_total_eval": float(settings.get("api_total_eval", 0.0) or 0.0),
                 "api_total_profit": float(settings.get("api_total_profit", 0.0) or 0.0),
@@ -5530,6 +5531,7 @@ class MainWindow(QMainWindow):
             account_cash = dict(account_settings_map.get(account_no) or {})
             api_deposit_cash = float(account_cash.get("deposit_cash", 0.0) or 0.0)
             api_orderable_cash = float(account_cash.get("orderable_cash", 0.0) or 0.0)
+            api_estimated_assets = float(account_cash.get("estimated_assets", 0.0) or 0.0)
             api_total_buy = float(account_cash.get("api_total_buy", 0.0) or 0.0)
             api_total_eval = float(account_cash.get("api_total_eval", 0.0) or 0.0)
             api_total_profit = float(account_cash.get("api_total_profit", 0.0) or 0.0)
@@ -5556,11 +5558,12 @@ class MainWindow(QMainWindow):
             )
             self.table_accounts_summary.setItem(row_index, 1, self._make_number_item(api_deposit_cash))
             self.table_accounts_summary.setItem(row_index, 2, self._make_number_item(api_orderable_cash))
-            self.table_accounts_summary.setItem(row_index, 3, self._make_number_item(holding_count))
-            self.table_accounts_summary.setItem(row_index, 4, self._make_number_item(total_buy))
-            self.table_accounts_summary.setItem(row_index, 5, self._make_number_item(total_eval))
-            self.table_accounts_summary.setItem(row_index, 6, self._make_number_item(total_profit, signed=True))
-            self.table_accounts_summary.setItem(row_index, 7, self._make_number_item(realized_profit_total, signed=True))
+            self.table_accounts_summary.setItem(row_index, 3, self._make_number_item(api_estimated_assets))
+            self.table_accounts_summary.setItem(row_index, 4, self._make_number_item(holding_count))
+            self.table_accounts_summary.setItem(row_index, 5, self._make_number_item(total_buy))
+            self.table_accounts_summary.setItem(row_index, 6, self._make_number_item(total_eval))
+            self.table_accounts_summary.setItem(row_index, 7, self._make_number_item(total_profit, signed=True))
+            self.table_accounts_summary.setItem(row_index, 8, self._make_number_item(realized_profit_total, signed=True))
 
         self.table_positions.setSortingEnabled(False)
         self.table_positions.setRowCount(len(position_states))
