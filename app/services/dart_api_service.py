@@ -91,7 +91,7 @@ class DartApiService(object):
             timeout=self.timeout,
         )
         response.raise_for_status()
-        zf = zipfile.ZipFile(io.BytesIO(response.content))
+        zf = self._open_zip_response(response, "document")
         contents = []
         for name in zf.namelist():
             lowered = str(name or "").lower()
@@ -147,7 +147,7 @@ class DartApiService(object):
             timeout=self.timeout,
         )
         response.raise_for_status()
-        zf = zipfile.ZipFile(io.BytesIO(response.content))
+        zf = self._open_zip_response(response, "corp_code")
         xml_names = [name for name in zf.namelist() if name.lower().endswith(".xml")]
         if not xml_names:
             raise RuntimeError("DART corp code XML not found")
@@ -263,6 +263,38 @@ class DartApiService(object):
             except Exception:
                 continue
         return raw.decode("utf-8", "ignore")
+
+    def _open_zip_response(self, response, endpoint_name):
+        raw = bytes(getattr(response, "content", b"") or b"")
+        try:
+            return zipfile.ZipFile(io.BytesIO(raw))
+        except zipfile.BadZipFile:
+            raise RuntimeError(self._build_dart_zip_error(raw, endpoint_name))
+
+    def _build_dart_zip_error(self, raw, endpoint_name):
+        text = self._decode_document_bytes(raw)
+        text = str(text or "").strip()
+        if not text:
+            return "DART {0} 응답이 비어 있습니다.".format(endpoint_name)
+        status = ""
+        message = ""
+        try:
+            root = ElementTree.fromstring(text)
+            status = str(root.findtext(".//status", "") or "").strip()
+            message = str(root.findtext(".//message", "") or "").strip()
+        except Exception:
+            status_match = re.search(r'"status"\s*:\s*"([^"]+)"', text)
+            message_match = re.search(r'"message"\s*:\s*"([^"]+)"', text)
+            if status_match:
+                status = str(status_match.group(1) or "").strip()
+            if message_match:
+                message = str(message_match.group(1) or "").strip()
+        if status or message:
+            return "DART {0} 오류: {1} {2}".format(endpoint_name, status, message).strip()
+        compact = " ".join(text.split())
+        if compact.startswith("<!DOCTYPE html") or compact.startswith("<html"):
+            return "DART {0} 응답이 ZIP이 아니라 HTML 오류 페이지입니다.".format(endpoint_name)
+        return "DART {0} 응답이 ZIP 형식이 아닙니다.".format(endpoint_name)
 
     def _flatten_xml_text(self, text):
         try:
