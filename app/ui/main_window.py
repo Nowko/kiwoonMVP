@@ -196,7 +196,7 @@ class MainWindow(QMainWindow):
         self._analysis_monitor_refresh_running = False
         self._analysis_monitor_refresh_rows = []
         self._analysis_monitor_refresh_index = 0
-        self._analysis_monitor_max_rows = 100
+        self._analysis_monitor_max_rows = 10
         self._analysis_monitor_batch_size = 40
         self._refresh_analysis_monitor_timer = QTimer(self)
         self._refresh_analysis_monitor_timer.setSingleShot(True)
@@ -1416,18 +1416,20 @@ class MainWindow(QMainWindow):
             "포착시각",
         ])
         header = self.table_analysis_monitor.horizontalHeader()
-        for col_index in range(6):
-            header.setSectionResizeMode(col_index, QHeaderView.Fixed)
-        self.table_analysis_monitor.setColumnWidth(0, 220)
-        self.table_analysis_monitor.setColumnWidth(1, 110)
-        self.table_analysis_monitor.setColumnWidth(2, 88)
-        self.table_analysis_monitor.setColumnWidth(3, 90)
-        self.table_analysis_monitor.setColumnWidth(4, 110)
-        self.table_analysis_monitor.setColumnWidth(5, 90)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
+        header.setSectionResizeMode(5, QHeaderView.Fixed)
+        self.table_analysis_monitor.setColumnWidth(1, 96)
+        self.table_analysis_monitor.setColumnWidth(2, 78)
+        self.table_analysis_monitor.setColumnWidth(3, 88)
+        self.table_analysis_monitor.setColumnWidth(4, 96)
+        self.table_analysis_monitor.setColumnWidth(5, 84)
         self.table_analysis_monitor.horizontalHeader().setStretchLastSection(False)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table_analysis_monitor.verticalHeader().setVisible(False)
-        self.table_analysis_monitor.verticalHeader().setDefaultSectionSize(26)
+        self.table_analysis_monitor.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_analysis_monitor.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table_analysis_monitor.setSelectionMode(QAbstractItemView.NoSelection)
         self.table_analysis_monitor.setFocusPolicy(Qt.NoFocus)
@@ -1449,6 +1451,15 @@ class MainWindow(QMainWindow):
             "font-weight: 700;"
             "}"
         )
+        self.table_analysis_monitor.setRowCount(int(self._analysis_monitor_max_rows or 10))
+        for row_index in range(int(self._analysis_monitor_max_rows or 10)):
+            for col_index in range(6):
+                item = QTableWidgetItem("")
+                if col_index in [3, 5]:
+                    item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+                elif col_index == 4:
+                    item.setTextAlignment(int(Qt.AlignCenter))
+                self.table_analysis_monitor.setItem(row_index, col_index, item)
         layout.addWidget(self.table_analysis_monitor)
         return widget
 
@@ -5799,17 +5810,59 @@ class MainWindow(QMainWindow):
             elif result_text in ["매수 제외", "매수 거부", "이탈 감지", "종료"]:
                 result_item.setForeground(QColor("#ff6a5a"))
 
+    def _clear_analysis_monitor_row(self, row_index):
+        table = getattr(self, "table_analysis_monitor", None)
+        if table is None:
+            return
+        for col_index in range(table.columnCount()):
+            item = table.item(row_index, col_index)
+            if item is None:
+                item = QTableWidgetItem("")
+                if col_index in [3, 5]:
+                    item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+                elif col_index == 4:
+                    item.setTextAlignment(int(Qt.AlignCenter))
+                table.setItem(row_index, col_index, item)
+            item.setText("")
+            item.setData(Qt.UserRole, "")
+            item.setForeground(QColor("#f5d36a"))
+
+    def _render_analysis_monitor_rows(self, rows):
+        table = getattr(self, "table_analysis_monitor", None)
+        if table is None:
+            return
+        visible_rows = int(self._analysis_monitor_max_rows or 10)
+        recent_rows = list(rows or [])[-visible_rows:]
+        table.setUpdatesEnabled(False)
+        try:
+            for row_index in range(visible_rows):
+                self._clear_analysis_monitor_row(row_index)
+            start_row = max(0, visible_rows - len(recent_rows))
+            for offset, row_data in enumerate(recent_rows):
+                self._populate_analysis_monitor_row(start_row + offset, row_data)
+        finally:
+            table.setUpdatesEnabled(True)
+
     def _append_analysis_monitor_row(self, row_data):
         table = getattr(self, "table_analysis_monitor", None)
         if table is None:
             return
-        current_rows = table.rowCount()
-        if current_rows >= int(self._analysis_monitor_max_rows or 200):
-            table.removeRow(0)
-            current_rows -= 1
-        table.insertRow(current_rows)
-        self._populate_analysis_monitor_row(current_rows, row_data)
-        table.scrollToBottom()
+        row_count = int(self._analysis_monitor_max_rows or 10)
+        table.setUpdatesEnabled(False)
+        try:
+            for row_index in range(0, row_count - 1):
+                for col_index in range(table.columnCount()):
+                    current_item = table.item(row_index, col_index)
+                    next_item = table.item(row_index + 1, col_index)
+                    if current_item is None:
+                        current_item = QTableWidgetItem("")
+                        table.setItem(row_index, col_index, current_item)
+                    current_item.setText(next_item.text() if next_item is not None else "")
+                    current_item.setData(Qt.UserRole, next_item.data(Qt.UserRole) if next_item is not None else "")
+                    current_item.setForeground(next_item.foreground() if next_item is not None else QColor("#f5d36a"))
+            self._populate_analysis_monitor_row(row_count - 1, row_data)
+        finally:
+            table.setUpdatesEnabled(True)
 
     def refresh_analysis_monitor(self):
         if not self._is_analysis_monitor_tab_active():
@@ -5825,13 +5878,9 @@ class MainWindow(QMainWindow):
         self._analysis_monitor_refresh_pending = False
         self._analysis_monitor_refresh_running = True
         self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message(0, len(rows)))
-        self.table_analysis_monitor.setUpdatesEnabled(False)
-        self.table_analysis_monitor.clearContents()
-        self.table_analysis_monitor.setRowCount(len(rows))
         self._analysis_monitor_refresh_batch_timer.start(0)
 
     def _finalize_analysis_monitor_refresh(self):
-        self.table_analysis_monitor.setUpdatesEnabled(True)
         self._analysis_monitor_refresh_running = False
         if self._analysis_monitor_refresh_pending and self._is_analysis_monitor_tab_active():
             self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message())
@@ -5847,18 +5896,22 @@ class MainWindow(QMainWindow):
             return
         rows = list(self._analysis_monitor_refresh_rows or [])
         total_count = len(rows)
+        visible_rows = int(self._analysis_monitor_max_rows or 10)
         if total_count <= 0:
+            self._render_analysis_monitor_rows([])
             self._finalize_analysis_monitor_refresh()
             return
-        start_index = int(self._analysis_monitor_refresh_index or 0)
-        end_index = min(start_index + int(self._analysis_monitor_batch_size or 40), total_count)
-        for row_index in range(start_index, end_index):
-            self._populate_analysis_monitor_row(row_index, rows[row_index])
-        self._analysis_monitor_refresh_index = end_index
-        self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message(end_index, total_count))
-        if end_index < total_count:
-            self._analysis_monitor_refresh_batch_timer.start(10)
+        if total_count <= visible_rows:
+            self._render_analysis_monitor_rows(rows)
+            self._analysis_monitor_refresh_index = total_count
+            self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message(total_count, total_count))
+            self._finalize_analysis_monitor_refresh()
             return
+        start_index = max(0, total_count - visible_rows)
+        visible_slice = rows[start_index:total_count]
+        self._render_analysis_monitor_rows(visible_slice)
+        self._analysis_monitor_refresh_index = total_count
+        self._set_analysis_monitor_loading(True, self._analysis_monitor_loading_message(total_count, total_count))
         self._finalize_analysis_monitor_refresh()
 
     def _on_analysis_monitor_symbol_detected(self, payload):
