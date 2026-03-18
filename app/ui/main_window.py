@@ -592,6 +592,7 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget(self)
         tabs.addTab(self._build_kiwoom_group(), "키움/계좌")
         tabs.addTab(self._build_naver_group(), "네이버 뉴스 API")
+        tabs.addTab(self._build_dart_group(), "DART API")
         tabs.addTab(self._build_telegram_group("뉴스 텔레그램", "news"), "뉴스 텔레그램")
         tabs.addTab(self._build_telegram_group("매매 텔레그램", "trade"), "매매 텔레그램")
         tabs.addTab(self._build_ai_group(), "AI API")
@@ -739,6 +740,30 @@ class MainWindow(QMainWindow):
         self.lbl_naver_summary = QLabel("상태: 미확인")
         self.lbl_naver_summary.setWordWrap(True)
         layout.addWidget(self.lbl_naver_summary, 7, 0, 1, 6)
+        return group
+
+    def _build_dart_group(self):
+        group = QGroupBox("DART API")
+        layout = QGridLayout(group)
+        layout.addWidget(QLabel("API Key"), 0, 0)
+        layout.addWidget(QLabel("사용"), 0, 1)
+        layout.addWidget(QLabel("저장"), 0, 2)
+        layout.addWidget(QLabel("상태"), 0, 3)
+
+        self.edt_dart_api_key = QLineEdit()
+        self.edt_dart_api_key.setEchoMode(QLineEdit.Password)
+        self.chk_dart_api_enabled = QCheckBox()
+        self.btn_save_dart_api = QPushButton("저장")
+        self.lbl_dart_api_status = QLabel("키 미입력")
+        self.lbl_dart_api_status.setWordWrap(True)
+        self.lbl_dart_api_summary = QLabel("상태: 미확인")
+        self.lbl_dart_api_summary.setWordWrap(True)
+
+        layout.addWidget(self.edt_dart_api_key, 1, 0)
+        layout.addWidget(self.chk_dart_api_enabled, 1, 1)
+        layout.addWidget(self.btn_save_dart_api, 1, 2)
+        layout.addWidget(self.lbl_dart_api_status, 1, 3)
+        layout.addWidget(self.lbl_dart_api_summary, 2, 0, 1, 4)
         return group
 
     def _build_telegram_group(self, title, channel_group):
@@ -2889,6 +2914,7 @@ class MainWindow(QMainWindow):
 
         for idx, widgets in enumerate(self.naver_rows, 1):
             widgets[3].clicked.connect(lambda checked=False, row_no=idx: self._save_naver_row(row_no))
+        self.btn_save_dart_api.clicked.connect(self._save_dart_api)
         for idx, widgets in enumerate(self.news_telegram_rows, 1):
             widgets[3].clicked.connect(lambda checked=False, row_no=idx: self._save_telegram_row("news", row_no))
         self.btn_save_news_send_min_score.clicked.connect(self._save_news_send_min_score)
@@ -3676,6 +3702,10 @@ class MainWindow(QMainWindow):
                 }
                 for idx, widgets in enumerate(self.naver_rows, 1)
             ],
+            "dart_api": {
+                "api_key": self.edt_dart_api_key.text().strip(),
+                "enabled": bool(self.chk_dart_api_enabled.isChecked()),
+            },
             "telegram": {
                 "news_send_min_score": int(self.spin_news_send_min_score.value() or 60),
                 "news": [
@@ -3717,6 +3747,9 @@ class MainWindow(QMainWindow):
             widgets[1].clear()
             widgets[2].setChecked(False)
             self._update_naver_row_detected_status(idx)
+        self.edt_dart_api_key.clear()
+        self.chk_dart_api_enabled.setChecked(False)
+        self._update_dart_api_detected_status()
         self.spin_news_send_min_score.setValue(60)
         for group_name, rows in [("news", self.news_telegram_rows), ("trade", self.trade_telegram_rows)]:
             for idx, widgets in enumerate(rows, 1):
@@ -3735,6 +3768,7 @@ class MainWindow(QMainWindow):
         self._refresh_credential_status_summaries()
         for idx in range(1, len(self.naver_rows) + 1):
             self.credential_manager.set_naver_key(idx, "", "", False)
+        self.credential_manager.set_dart_api("", False)
         self.credential_manager.set_news_send_min_score(60)
         for channel_group, rows in [("news", self.news_telegram_rows), ("trade", self.trade_telegram_rows)]:
             for idx, _widgets in enumerate(rows, 1):
@@ -3761,6 +3795,14 @@ class MainWindow(QMainWindow):
             widgets[1].setText(client_secret)
             widgets[2].setChecked(enabled)
             self.credential_manager.set_naver_key(idx, client_id, client_secret, enabled)
+
+        dart_row = dict(profile.get("dart_api") or {})
+        dart_api_key = str(dart_row.get("api_key", "") or "")
+        dart_enabled = bool(dart_row.get("enabled", False))
+        self.edt_dart_api_key.setText(dart_api_key)
+        self.chk_dart_api_enabled.setChecked(dart_enabled)
+        self.credential_manager.set_dart_api(dart_api_key, dart_enabled)
+        self._update_dart_api_detected_status()
 
         tg_root = dict(profile.get("telegram") or {})
         self.spin_news_send_min_score.setValue(int(tg_root.get("news_send_min_score", 60) or 60))
@@ -4218,6 +4260,16 @@ class MainWindow(QMainWindow):
         else:
             lbl_status.setText("키 미입력")
 
+    def _update_dart_api_detected_status(self):
+        has_key = bool(self.edt_dart_api_key.text().strip())
+        enabled = bool(self.chk_dart_api_enabled.isChecked())
+        if has_key and enabled:
+            self.lbl_dart_api_status.setText("키 감지 / 사용")
+        elif has_key:
+            self.lbl_dart_api_status.setText("키 감지 / 미사용")
+        else:
+            self.lbl_dart_api_status.setText("키 미입력")
+
     def _update_telegram_row_detected_status(self, channel_group, row_no):
         rows = self.news_telegram_rows if channel_group == "news" else self.trade_telegram_rows
         edt_token, edt_chat, _chk, _btn_save, lbl_status = rows[row_no - 1]
@@ -4238,6 +4290,15 @@ class MainWindow(QMainWindow):
             if row[0].text().strip() and row[1].text().strip():
                 naver_detected += 1
         self.lbl_naver_summary.setText("상태: 키 감지 {0}/6".format(naver_detected))
+
+        dart_has_key = bool(self.edt_dart_api_key.text().strip())
+        dart_enabled = bool(self.chk_dart_api_enabled.isChecked())
+        if dart_has_key and dart_enabled:
+            self.lbl_dart_api_summary.setText("상태: DART API 사용")
+        elif dart_has_key:
+            self.lbl_dart_api_summary.setText("상태: DART API 저장됨")
+        else:
+            self.lbl_dart_api_summary.setText("상태: DART API 미입력")
 
         for group_name, rows, label in [
             ("news", self.news_telegram_rows, self.lbl_news_telegram_summary),
@@ -4431,6 +4492,15 @@ class MainWindow(QMainWindow):
         self.append_log(u"💾 네이버 키 세트 저장: {0}".format(row_no))
         self._schedule_user_profile_save()
 
+    def _save_dart_api(self):
+        api_key = self.edt_dart_api_key.text().strip()
+        enabled = bool(self.chk_dart_api_enabled.isChecked())
+        self.credential_manager.set_dart_api(api_key, enabled)
+        self._update_dart_api_detected_status()
+        self._refresh_credential_status_summaries()
+        self.append_log(u"💶 DART API 설정 저장")
+        self._schedule_user_profile_save()
+
     def _save_news_send_min_score(self):
         score = int(self.spin_news_send_min_score.value() or 60)
         self.credential_manager.set_news_send_min_score(score)
@@ -4456,6 +4526,11 @@ class MainWindow(QMainWindow):
             widgets[1].setText(data.get("client_secret", ""))
             widgets[2].setChecked(bool(data.get("enabled", False)))
             self._update_naver_row_detected_status(idx)
+
+        dart_row = self.credential_manager.get_dart_api(include_key=True)
+        self.edt_dart_api_key.setText(dart_row.get("api_key", ""))
+        self.chk_dart_api_enabled.setChecked(bool(dart_row.get("enabled", False)))
+        self._update_dart_api_detected_status()
 
         self.spin_news_send_min_score.setValue(int(self.credential_manager.get_news_send_min_score() or 60))
         for group_name, rows in [("news", self.news_telegram_rows), ("trade", self.trade_telegram_rows)]:

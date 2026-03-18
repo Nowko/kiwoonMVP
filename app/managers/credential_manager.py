@@ -19,6 +19,10 @@ class CredentialManager(QObject):
     def _default_data(self):
         return {
             "naver_keys": [],
+            "dart_api": {
+                "api_key": "",
+                "enabled": False,
+            },
             "telegram": {
                 "news": [],
                 "trade": [],
@@ -35,6 +39,7 @@ class CredentialManager(QObject):
     def _normalize_data(self, data):
         normalized = dict(data or {})
         normalized.setdefault("naver_keys", [])
+        normalized.setdefault("dart_api", {"api_key": "", "enabled": False})
         normalized.setdefault("telegram", {"news": [], "trade": []})
         normalized.setdefault("telegram_settings", {"news_send_min_score": 60})
         normalized.setdefault("ai_apis", [])
@@ -104,6 +109,21 @@ class CredentialManager(QObject):
                 item["client_secret"] = self.mask(self.simple_decrypt(item.get("client_secret", "")))
             rows.append(item)
         return rows
+
+    def set_dart_api(self, api_key, enabled):
+        self._data["dart_api"] = {
+            "api_key": self.simple_encrypt(str(api_key or "")),
+            "enabled": bool(enabled),
+        }
+        self.save()
+
+    def get_dart_api(self, include_key=False):
+        row = dict(self._data.get("dart_api") or {})
+        api_key = self.simple_decrypt(row.get("api_key", ""))
+        return {
+            "api_key": api_key if include_key else self.mask(api_key),
+            "enabled": bool(row.get("enabled", False)),
+        }
 
 
     def set_ai_api(self, slot_no, provider, api_key, base_url, model_name, analysis_label, enabled):
