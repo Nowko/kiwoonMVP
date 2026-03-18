@@ -689,10 +689,10 @@ class OrderManager(QObject):
             "SELECT COUNT(*) AS sold_cnt, COALESCE(SUM(pnl_realized), 0) AS realized_sum FROM trade_cycles WHERE trade_date=? AND account_no=? AND status IN ('CLOSED', 'SIMULATED_CLOSED')",
             (trade_date, account_no),
         ) or {}
-        holding_eval_total = float(holding_row.get("eval_sum") or 0.0)
-        holding_count = int(holding_row.get("cnt") or 0)
-        sold_count = int(sold_row.get("sold_cnt") or 0)
-        cycle_realized_total = float(sold_row.get("realized_sum") or 0.0)
+        holding_eval_total = float(holding_row["eval_sum"] if holding_row and "eval_sum" in holding_row.keys() else 0.0)
+        holding_count = int(holding_row["cnt"] if holding_row and "cnt" in holding_row.keys() else 0)
+        sold_count = int(sold_row["sold_cnt"] if sold_row and "sold_cnt" in sold_row.keys() else 0)
+        cycle_realized_total = float(sold_row["realized_sum"] if sold_row and "realized_sum" in sold_row.keys() else 0.0)
         account_cash = self._get_account_cash_settings(account_no)
         api_total_profit = float(account_cash.get("api_total_profit", 0.0) or 0.0)
         api_realized_profit = float(account_cash.get("api_realized_profit", 0.0) or 0.0)
