@@ -4779,6 +4779,19 @@ class MainWindow(QMainWindow):
         else:
             lbl_status.setText("저장됨 / 미사용")
 
+    def _update_ai_row_status(self, row_no):
+        chk, cbo_provider, edt_key, edt_base, edt_model, edt_label, _btn_save, lbl_status = self.ai_api_rows[row_no - 1]
+        provider = cbo_provider.currentText()
+        has_key = bool(edt_key.text().strip())
+        enabled = bool(chk.isChecked())
+        model = edt_model.text().strip()
+        if not has_key:
+            lbl_status.setText("미입력")
+        elif enabled:
+            lbl_status.setText("ON / {0}{1}".format(provider, " / {0}".format(model) if model else ""))
+        else:
+            lbl_status.setText("저장됨 / 미사용")
+
     def _save_ai_row(self, row_no):
         chk, cbo_provider, edt_key, edt_base, edt_model, edt_label, _btn_save, _lbl_status = self.ai_api_rows[row_no - 1]
         provider = cbo_provider.currentData() or "openai"
