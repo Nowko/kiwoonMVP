@@ -1796,9 +1796,9 @@ class OrderManager(QObject):
         api_total_eval = float(summary.get("api_total_eval") or 0)
         api_total_profit = float(summary.get("api_total_profit") or 0)
         api_realized_profit = float(summary.get("api_realized_profit") or 0)
-        if deposit_cash <= 0 and previous_cash.get("deposit_cash", 0.0) > 0:
+        if deposit_cash == 0 and previous_cash.get("deposit_cash", 0.0) != 0:
             deposit_cash = float(previous_cash.get("deposit_cash") or 0.0)
-        if orderable_cash <= 0 and previous_cash.get("orderable_cash", 0.0) > 0:
+        if orderable_cash == 0 and previous_cash.get("orderable_cash", 0.0) != 0:
             orderable_cash = float(previous_cash.get("orderable_cash") or 0.0)
         if estimated_assets <= 0 and previous_cash.get("estimated_assets", 0.0) > 0:
             estimated_assets = float(previous_cash.get("estimated_assets") or 0.0)
@@ -1920,9 +1920,9 @@ class OrderManager(QObject):
         api_total_eval = float(summary.get("api_total_eval") or 0)
         api_total_profit = float(summary.get("api_total_profit") or 0)
         api_realized_profit = float(summary.get("api_realized_profit") or 0)
-        if deposit_cash <= 0 and previous_cash.get("deposit_cash", 0.0) > 0:
+        if deposit_cash == 0 and previous_cash.get("deposit_cash", 0.0) != 0:
             deposit_cash = float(previous_cash.get("deposit_cash") or 0.0)
-        if orderable_cash <= 0 and previous_cash.get("orderable_cash", 0.0) > 0:
+        if orderable_cash == 0 and previous_cash.get("orderable_cash", 0.0) != 0:
             orderable_cash = float(previous_cash.get("orderable_cash") or 0.0)
         if estimated_assets <= 0 and previous_cash.get("estimated_assets", 0.0) > 0:
             estimated_assets = float(previous_cash.get("estimated_assets") or 0.0)

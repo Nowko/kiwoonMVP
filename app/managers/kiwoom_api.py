@@ -1581,8 +1581,8 @@ class KiwoomApiClient(QObject):
                     QTimer.singleShot(350, self._dispatch_next_sync_request)
 
     def _parse_cash_summary(self, tr_code, rq_name):
-        deposit_cash = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["예수금", "추정예수금", "D+2추정예수금"]))
-        orderable_cash = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["주문가능금액", "주문가능현금", "출금가능금액"]))
+        deposit_cash = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["예수금", "추정예수금", "D+2추정예수금"]))
+        orderable_cash = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["주문가능금액", "주문가능현금", "출금가능금액"]))
         estimated_assets = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["추정예탁자산", "총평가금액", "총자산", "예탁자산평가액"]))
         api_total_buy = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총매입금액", "총매입", "매입금액합계"]))
         api_total_eval = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가금액", "총자산", "예탁자산평가액", "추정예탁자산"]))
@@ -1599,8 +1599,8 @@ class KiwoomApiClient(QObject):
         }
 
     def _parse_balance_summary(self, tr_code, rq_name):
-        deposit_cash = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["예수금", "추정예수금", "D+2추정예수금"]))
-        orderable_cash = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["주문가능금액", "출금가능금액", "주문가능현금"]))
+        deposit_cash = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["예수금", "추정예수금", "D+2추정예수금"]))
+        orderable_cash = self._to_float(self.get_comm_data_any(tr_code, rq_name, 0, ["주문가능금액", "출금가능금액", "주문가능현금"]))
         estimated_assets = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["추정예탁자산", "총평가금액", "총자산", "예탁자산평가액"]))
         api_total_buy = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총매입금액", "총매입", "매입금액합계"]))
         api_total_eval = self._to_abs_float(self.get_comm_data_any(tr_code, rq_name, 0, ["총평가금액", "총자산", "예탁자산평가액", "추정예탁자산"]))
