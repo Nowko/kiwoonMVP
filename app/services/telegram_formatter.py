@@ -400,7 +400,7 @@ class TelegramFormatter(object):
                 self._escape(direction),
                 self._escape(event_type),
             ),
-            "<b>{0}</b> : 중요도 {1} / 확정성 {2} / 행동성 {3} / 새로움 {4}".format(
+            "<b>{0}</b> : 중요도 {1} / 신뢰도 {2} / 매매활용도 {3} / 신선도 {4}".format(
                 self._fmt_float1(final_score, default="-"),
                 importance,
                 certainty,
