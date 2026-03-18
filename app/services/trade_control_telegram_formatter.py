@@ -8,13 +8,22 @@ class TradeControlTelegramFormatter(object):
     def _markup(self, rows):
         return {"inline_keyboard": rows}
 
+    def _mask_account(self, account_no):
+        value = str(account_no or "").strip()
+        if not value:
+            return "-"
+        digits = "".join([ch for ch in value if ch.isdigit()])
+        if len(digits) >= 6:
+            return digits[-6:]
+        return value[-6:]
+
     def build_home(self, selected_account_no, trade_enabled):
         text = (
             "[매매 관리자]\n\n"
             "현재 선택 계좌: {0}\n"
             "자동매매: {1}\n\n"
             "원하는 메뉴를 선택하세요."
-        ).format(selected_account_no or "-", "ON" if trade_enabled else "OFF")
+        ).format(self._mask_account(selected_account_no), "ON" if trade_enabled else "OFF")
         return text, self._markup([
             [self._btn("운영 현황", "tc|menu|status"), self._btn("계좌 선택", "tc|acct|list")],
             [self._btn("보유 종목", "tc|hold|list|{0}".format(selected_account_no or "")), self._btn("조건식 관리", "tc|cond|list")],
@@ -34,7 +43,17 @@ class TradeControlTelegramFormatter(object):
             "실현손익: {realized_profit}\n\n"
             "보유종목: {holding_count}\n"
             "미체결: {open_order_count}"
-        ).format(**summary)
+        ).format(
+            selected_account_no=self._mask_account(summary.get("selected_account_no")),
+            trade_enabled=summary.get("trade_enabled", "-"),
+            estimated_assets=summary.get("estimated_assets", "-"),
+            deposit_cash=summary.get("deposit_cash", "-"),
+            orderable_cash=summary.get("orderable_cash", "-"),
+            total_profit=summary.get("total_profit", "-"),
+            realized_profit=summary.get("realized_profit", "-"),
+            holding_count=summary.get("holding_count", 0),
+            open_order_count=summary.get("open_order_count", 0),
+        )
         return text, self._markup([
             [self._btn("전체 계좌 보기", "tc|acct|list"), self._btn("보유 종목", "tc|hold|list|{0}".format(summary.get("selected_account_no") or ""))],
             [self._btn("미체결 보기", "tc|open|list|{0}".format(summary.get("selected_account_no") or "")), self._btn("조건식 관리", "tc|cond|list")],
@@ -49,7 +68,7 @@ class TradeControlTelegramFormatter(object):
             selected = " | 선택중" if account_no == str(selected_account_no or "") else ""
             lines.append(
                 "{0}{1}\n추정자산 {2} / 예수금 {3}\n주문가능 {4} / 총손익 {5} / 실현 {6}\n".format(
-                    account_no,
+                    self._mask_account(account_no),
                     selected,
                     row.get("estimated_assets_text", "-"),
                     row.get("deposit_cash_text", "-"),
@@ -58,7 +77,7 @@ class TradeControlTelegramFormatter(object):
                     row.get("realized_profit_text", "-"),
                 )
             )
-            buttons.append([self._btn("{0}{1}".format(account_no, selected), "tc|acct|detail|{0}".format(account_no))])
+            buttons.append([self._btn("{0}{1}".format(self._mask_account(account_no), selected), "tc|acct|detail|{0}".format(account_no))])
         buttons.append([self._btn("메인 메뉴", "tc|menu|home")])
         return "\n".join(lines), self._markup(buttons)
 
@@ -74,7 +93,17 @@ class TradeControlTelegramFormatter(object):
             "보유종목: {holding_count}\n"
             "미체결: {open_order_count}\n"
             "현재 선택 계좌: {selected_flag}"
-        ).format(selected_flag="예" if is_selected else "아니오", **row)
+        ).format(
+            account_no=self._mask_account(row.get("account_no")),
+            estimated_assets_text=row.get("estimated_assets_text", "-"),
+            deposit_cash_text=row.get("deposit_cash_text", "-"),
+            orderable_cash_text=row.get("orderable_cash_text", "-"),
+            total_profit_text=row.get("total_profit_text", "-"),
+            realized_profit_text=row.get("realized_profit_text", "-"),
+            holding_count=row.get("holding_count", 0),
+            open_order_count=row.get("open_order_count", 0),
+            selected_flag="예" if is_selected else "아니오",
+        )
         return text, self._markup([
             [self._btn("이 계좌 선택", "tc|acct|select|{0}".format(row.get("account_no") or ""))],
             [self._btn("보유 종목 보기", "tc|hold|list|{0}".format(row.get("account_no") or "")), self._btn("미체결 보기", "tc|open|list|{0}".format(row.get("account_no") or ""))],
@@ -82,7 +111,7 @@ class TradeControlTelegramFormatter(object):
         ])
 
     def build_holdings(self, account_no, rows):
-        lines = ["[보유 종목]", "", "계좌: {0}".format(account_no or "-"), ""]
+        lines = ["[보유 종목]", "", "계좌: {0}".format(self._mask_account(account_no)), ""]
         buttons = []
         if not rows:
             lines.append("보유 종목이 없습니다.")
@@ -98,6 +127,7 @@ class TradeControlTelegramFormatter(object):
     def build_holding_detail(self, row):
         text = (
             "[보유 종목 상세]\n\n"
+            "계좌: {account_no}\n"
             "종목: {name} ({code})\n"
             "수량: {qty}\n"
             "평균가: {avg_price_text}\n"
@@ -106,7 +136,18 @@ class TradeControlTelegramFormatter(object):
             "수익률: {eval_rate_text}\n"
             "매수전략: {buy_strategy_text}\n"
             "매도전략: {sell_strategy_text}"
-        ).format(**row)
+        ).format(
+            account_no=self._mask_account(row.get("account_no")),
+            name=row.get("name", "-"),
+            code=row.get("code", "-"),
+            qty=row.get("qty", 0),
+            avg_price_text=row.get("avg_price_text", "-"),
+            current_price_text=row.get("current_price_text", "-"),
+            eval_profit_text=row.get("eval_profit_text", "-"),
+            eval_rate_text=row.get("eval_rate_text", "-"),
+            buy_strategy_text=row.get("buy_strategy_text", "-"),
+            sell_strategy_text=row.get("sell_strategy_text", "-"),
+        )
         account_no = row.get("account_no") or ""
         code = row.get("code") or ""
         return text, self._markup([
@@ -115,7 +156,7 @@ class TradeControlTelegramFormatter(object):
         ])
 
     def build_open_orders(self, account_no, rows):
-        lines = ["[미체결 관리]", "", "계좌: {0}".format(account_no or "-"), ""]
+        lines = ["[미체결 관리]", "", "계좌: {0}".format(self._mask_account(account_no)), ""]
         buttons = []
         if not rows:
             lines.append("미체결 주문이 없습니다.")
@@ -132,6 +173,7 @@ class TradeControlTelegramFormatter(object):
     def build_open_order_detail(self, row):
         text = (
             "[미체결 상세]\n\n"
+            "계좌: {account_no}\n"
             "종목: {name} ({code})\n"
             "주문번호: {order_no}\n"
             "주문구분: {order_type}\n"
@@ -139,7 +181,17 @@ class TradeControlTelegramFormatter(object):
             "미체결수량: {unfilled_qty}\n"
             "주문가격: {order_price}\n"
             "상태: {order_status}"
-        ).format(**row)
+        ).format(
+            account_no=self._mask_account(row.get("account_no")),
+            name=row.get("name", "-"),
+            code=row.get("code", "-"),
+            order_no=row.get("order_no", "-"),
+            order_type=row.get("order_type", "-"),
+            order_qty=row.get("order_qty", 0),
+            unfilled_qty=row.get("unfilled_qty", 0),
+            order_price=row.get("order_price", "-"),
+            order_status=row.get("order_status", "-"),
+        )
         account_no = row.get("account_no") or ""
         order_no = row.get("order_no") or ""
         return text, self._markup([
