@@ -108,6 +108,7 @@ class DartGPTAnalysisService(object):
                 "- 금액: {0}".format(self._sanitize(row.get("amount", ""), 60)),
                 "- 전환가액: {0}".format(self._sanitize(row.get("conversion_price", ""), 60)),
                 "- 상장예정일: {0}".format(self._sanitize(row.get("listing_due_date", ""), 40)),
+                "- 주요문구: {0}".format(self._sanitize(row.get("detail_excerpt", ""), 320)),
                 "",
             ])
         lines.extend([

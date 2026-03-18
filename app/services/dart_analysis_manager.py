@@ -55,6 +55,7 @@ class DartAnalysisManager(QObject):
             if cached:
                 return cached
         disclosures = self.api_service.fetch_recent_disclosures(code, days=days)
+        disclosures = self.api_service.enrich_disclosures(disclosures, force=False, max_age_hours=168)
         risk_disclosures = self.signal_service.filter_risky_financing_disclosures(disclosures)
         signal_result = self.signal_service.score_signals(code, name, risk_disclosures)
         self.signal_service.save_event_cache(risk_disclosures)

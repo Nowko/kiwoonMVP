@@ -34,7 +34,9 @@ class DartSignalService(object):
     def normalize_disclosure(self, row):
         data = dict(row or {})
         report_name = str(data.get("report_name", "") or "").strip()
-        event_type = self._classify_event_type(report_name)
+        detail_text = str(data.get("detail_text", "") or "")
+        event_type = self._classify_event_type(report_name, detail_text=detail_text)
+        detail_fields = dict(data.get("detail_fields") or {})
         return {
             "event_id": str(data.get("event_id", "") or ""),
             "code": str(data.get("code", "") or ""),
@@ -43,13 +45,14 @@ class DartSignalService(object):
             "report_name": report_name,
             "event_type": event_type,
             "sub_type": self._derive_sub_type(event_type, report_name),
-            "counterparty": self._extract_counterparty(data),
-            "fund_purpose": self._extract_fund_purpose(data),
-            "amount": self._extract_amount(data),
-            "shares": self._extract_shares(data),
-            "conversion_price": self._extract_conversion_price(data),
-            "refixing_flag": 1 if event_type == "conversion_price_adjustment" else 0,
-            "listing_due_date": self._extract_listing_due_date(data),
+            "counterparty": self._extract_counterparty(data, detail_fields=detail_fields),
+            "fund_purpose": self._extract_fund_purpose(data, detail_fields=detail_fields),
+            "amount": self._extract_amount(data, detail_fields=detail_fields),
+            "shares": self._extract_shares(data, detail_fields=detail_fields),
+            "conversion_price": self._extract_conversion_price(data, detail_fields=detail_fields),
+            "refixing_flag": 1 if (event_type == "conversion_price_adjustment" or int(detail_fields.get("refixing_flag", 0) or 0)) else 0,
+            "listing_due_date": self._extract_listing_due_date(data, detail_fields=detail_fields),
+            "detail_excerpt": str(data.get("detail_excerpt", "") or detail_fields.get("excerpt", "") or ""),
             "source_url": str(data.get("source_url", "") or ""),
             "raw_json": dict(data.get("raw_json") or data or {}),
         }
@@ -72,41 +75,42 @@ class DartSignalService(object):
             counterparty = str(event.get("counterparty", "") or "")
             report_name = str(event.get("report_name", "") or "")
             date_label = str(event.get("disclosure_date", "") or "")
+            excerpt = str(event.get("detail_excerpt", "") or "")
 
             if event_type == "cb_issue":
                 score += 20
                 tags["mezzanine_flag"] = 1
-                evidence.append(u"{0} CB 발행 공시".format(date_label or report_name))
+                evidence.append(self._evidence_line(date_label, u"CB 발행 공시", excerpt))
             elif event_type == "bw_issue":
                 score += 22
                 tags["mezzanine_flag"] = 1
-                evidence.append(u"{0} BW 발행 공시".format(date_label or report_name))
+                evidence.append(self._evidence_line(date_label, u"BW 발행 공시", excerpt))
             elif event_type == "eb_issue":
                 score += 18
                 tags["mezzanine_flag"] = 1
-                evidence.append(u"{0} EB 발행 공시".format(date_label or report_name))
+                evidence.append(self._evidence_line(date_label, u"EB 발행 공시", excerpt))
             elif event_type == "third_party_allocation":
                 score += 20
                 tags["dilution_flag"] = 1
-                evidence.append(u"{0} 제3자배정 유상증자 공시".format(date_label or report_name))
+                evidence.append(self._evidence_line(date_label, u"제3자배정 유상증자 공시", excerpt))
             elif event_type in ["conversion_exercise", "bw_exercise"]:
                 score += 18
                 tags["dilution_flag"] = 1
                 tags["overhang_flag"] = 1
-                evidence.append(u"{0} 전환/행사 공시".format(date_label or report_name))
+                evidence.append(self._evidence_line(date_label, u"전환/행사 공시", excerpt))
             elif event_type == "conversion_price_adjustment":
                 score += 20
                 tags["mezzanine_flag"] = 1
                 tags["dilution_flag"] = 1
-                evidence.append(u"{0} 전환가액 조정 공시".format(date_label or report_name))
+                evidence.append(self._evidence_line(date_label, u"전환가액 조정 공시", excerpt))
             elif event_type == "new_share_listing":
                 score += 15
                 tags["overhang_flag"] = 1
-                evidence.append(u"{0} 신주 상장 관련 공시".format(date_label or report_name))
+                evidence.append(self._evidence_line(date_label, u"신주 상장 관련 공시", excerpt))
             elif event_type in ["major_shareholder_change", "largest_shareholder_change"]:
                 score += 12
                 tags["control_change_flag"] = 1
-                evidence.append(u"{0} 지배구조 변경 관련 공시".format(date_label or report_name))
+                evidence.append(self._evidence_line(date_label, u"지배구조 변경 관련 공시", excerpt))
 
             if self._has_association(counterparty):
                 score += 15
@@ -225,11 +229,12 @@ class DartSignalService(object):
             ),
         )
 
-    def _classify_event_type(self, report_name):
+    def _classify_event_type(self, report_name, detail_text=""):
         report_name = str(report_name or "").strip()
-        if not report_name:
+        detail_text = str(detail_text or "").strip()
+        if not report_name and not detail_text:
             return ""
-        lowered = report_name.lower()
+        lowered = u"{0}\n{1}".format(report_name, detail_text).lower()
         for event_type, keywords in self.EVENT_RULES:
             for keyword in keywords:
                 if keyword and (keyword.lower() in lowered):
@@ -243,33 +248,64 @@ class DartSignalService(object):
             return "private"
         return ""
 
-    def _extract_counterparty(self, row):
+    def _extract_counterparty(self, row, detail_fields=None):
+        detail_fields = dict(detail_fields or {})
+        detail_counterparty = str(detail_fields.get("counterparty", "") or "").strip()
+        if detail_counterparty:
+            return detail_counterparty
         raw = dict(row.get("raw_json") or {})
         return str(raw.get("flr_nm", "") or row.get("flr_name", "") or "").strip()
 
-    def _extract_fund_purpose(self, row):
+    def _extract_fund_purpose(self, row, detail_fields=None):
+        detail_fields = dict(detail_fields or {})
+        detail_value = str(detail_fields.get("fund_purpose", "") or "").strip()
+        if detail_value:
+            return detail_value
         raw = dict(row.get("raw_json") or {})
         return str(raw.get("rm", "") or row.get("rm", "") or "").strip()
 
-    def _extract_amount(self, row):
+    def _extract_amount(self, row, detail_fields=None):
+        detail_fields = dict(detail_fields or {})
+        detail_amount = self._to_float(detail_fields.get("amount"))
+        if detail_amount > 0:
+            return detail_amount
         raw = dict(row.get("raw_json") or {})
         return self._extract_number(raw, ["amount", "issu", "total_amount"])
 
-    def _extract_shares(self, row):
+    def _extract_shares(self, row, detail_fields=None):
+        detail_fields = dict(detail_fields or {})
+        detail_value = self._to_float(detail_fields.get("shares"))
+        if detail_value > 0:
+            return detail_value
         raw = dict(row.get("raw_json") or {})
         return self._extract_number(raw, ["shares", "stkcnt", "stock_cnt"])
 
-    def _extract_conversion_price(self, row):
+    def _extract_conversion_price(self, row, detail_fields=None):
+        detail_fields = dict(detail_fields or {})
+        detail_value = self._to_float(detail_fields.get("conversion_price"))
+        if detail_value > 0:
+            return detail_value
         raw = dict(row.get("raw_json") or {})
         return self._extract_number(raw, ["conversion_price", "conv_prc", "stock_knd"])
 
-    def _extract_listing_due_date(self, row):
+    def _extract_listing_due_date(self, row, detail_fields=None):
+        detail_fields = dict(detail_fields or {})
+        detail_value = str(detail_fields.get("listing_due_date", "") or "").strip()
+        if detail_value:
+            return detail_value
         raw = dict(row.get("raw_json") or {})
         for key in ["listing_due_date", "list_dt", "stk_lstg_dt", "rcept_dt"]:
             value = str(raw.get(key, "") or "").strip()
             if value:
                 return value
         return ""
+
+    def _evidence_line(self, date_label, event_label, excerpt):
+        prefix = u"{0} {1}".format(date_label or "", event_label or "").strip()
+        excerpt = str(excerpt or "").strip()
+        if excerpt:
+            return u"{0}: {1}".format(prefix, excerpt[:180])
+        return prefix
 
     def _extract_number(self, raw, keys):
         for key in keys:
