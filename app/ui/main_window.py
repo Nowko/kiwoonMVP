@@ -3083,8 +3083,22 @@ class MainWindow(QMainWindow):
         self.table_accounts_summary.setEditTriggers(QAbstractItemView.NoEditTriggers)
         layout.addWidget(self.table_accounts_summary)
 
-        self.table_positions = QTableWidget(0, 10)
-        self.table_positions.setHorizontalHeaderLabels(["계좌", "종목명", "코드", "매입가", "현재가", "평가손익", "수익률", "수량", "매수 전략", "뉴스 상태"])
+        self.table_positions = QTableWidget(0, 13)
+        self.table_positions.setHorizontalHeaderLabels([
+            "계좌",
+            "종목명",
+            "코드",
+            "매입가",
+            "현재가",
+            "평가손익",
+            "수익률",
+            "수량",
+            "익절%",
+            "익절가",
+            "익절주문",
+            "매수 전략",
+            "뉴스 상태",
+        ])
         header = self.table_positions.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Fixed)
@@ -3102,6 +3116,20 @@ class MainWindow(QMainWindow):
         self.table_positions.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table_positions.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table_positions.setSortingEnabled(True)
+        self.table_positions.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
+        self.table_positions.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeToContents)
+        self.table_positions.horizontalHeader().setSectionResizeMode(10, QHeaderView.ResizeToContents)
+        self.table_positions.horizontalHeader().setSectionResizeMode(11, QHeaderView.Stretch)
+        self.table_positions.horizontalHeader().setSectionResizeMode(12, QHeaderView.ResizeToContents)
+        self.table_positions.setColumnWidth(8, 70)
+        self.table_positions.setColumnWidth(10, 110)
+        self.table_positions.setColumnWidth(11, 220)
+        self.table_positions.setEditTriggers(
+            QAbstractItemView.DoubleClicked
+            | QAbstractItemView.SelectedClicked
+            | QAbstractItemView.EditKeyPressed
+        )
+        self._operations_position_item_guard = False
         layout.addWidget(self.table_positions)
 
         position_action_row = QHBoxLayout()
@@ -3290,6 +3318,7 @@ class MainWindow(QMainWindow):
         self.btn_operations_refresh.clicked.connect(self._sync_active_accounts)
         self.cbo_daily_review_date.currentIndexChanged.connect(self.refresh_daily_review_view)
         self.btn_manual_sell_position.clicked.connect(self._manual_sell_selected_position)
+        self.table_positions.itemChanged.connect(self._on_operations_position_item_changed)
         self.btn_manual_cancel_open_order.clicked.connect(self._manual_cancel_selected_open_order)
         self.btn_manual_reprice_open_order.clicked.connect(self._manual_reprice_selected_open_order)
         self.btn_manual_market_open_order.clicked.connect(self._manual_market_selected_open_order)
@@ -6074,6 +6103,40 @@ class MainWindow(QMainWindow):
             "code": item_code.text(),
         }
 
+    def _on_operations_position_item_changed(self, item):
+        if getattr(self, "_operations_position_item_guard", False):
+            return
+        if item is None or item.column() != 8:
+            return
+        row = item.row()
+        item_account = self.table_positions.item(row, 0)
+        item_code = self.table_positions.item(row, 2)
+        if not item_account or not item_code:
+            return
+        account_no = str(item_account.data(Qt.UserRole + 1) or item_account.text() or "").strip()
+        code = str(item_code.text() or "").strip()
+        if not account_no or not code:
+            return
+        raw_text = str(item.text() or "").strip().replace(",", "").replace("%", "")
+        try:
+            take_profit_pct = float(raw_text)
+        except Exception:
+            QMessageBox.warning(self, "익절값 수정", "익절%는 숫자로 입력해 주세요.")
+            self._schedule_refresh_operations(80)
+            return
+        if take_profit_pct <= 0:
+            QMessageBox.warning(self, "익절값 수정", "익절%는 0보다 크게 입력해 주세요.")
+            self._schedule_refresh_operations(80)
+            return
+        ok = False
+        try:
+            ok = bool(self.order_manager.set_position_take_profit_pct(account_no, code, take_profit_pct))
+        except Exception:
+            ok = False
+        if not ok:
+            QMessageBox.warning(self, "익절값 수정", "익절값을 저장하거나 주문을 갱신하지 못했습니다.")
+        self._schedule_refresh_operations(80)
+
     def _manual_sell_selected_position(self):
         context = self._selected_position_context()
         if not context:
@@ -6199,6 +6262,7 @@ class MainWindow(QMainWindow):
         self.table_accounts_summary.setUpdatesEnabled(False)
         self.table_positions.setUpdatesEnabled(False)
         self.table_open_orders.setUpdatesEnabled(False)
+        self._operations_position_item_guard = True
         try:
             self.table_accounts_summary.setRowCount(len(rows))
             for row_index, row in enumerate(rows):
@@ -6243,22 +6307,46 @@ class MainWindow(QMainWindow):
 
             self.table_positions.setSortingEnabled(False)
             self.table_positions.setRowCount(len(position_states))
+            def _readonly_position_item(item):
+                if item is not None:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                return item
             for row_index, state in enumerate(position_states):
                 account_no = str(state.get("account_no") or "")
+                take_profit_info = {}
+                try:
+                    take_profit_info = dict(self.order_manager.describe_take_profit_state(state) or {})
+                except Exception:
+                    take_profit_info = {}
                 self.table_positions.setItem(
                     row_index,
                     0,
-                    self._make_table_item(self._masked_account_tail(account_no), sort_value=account_no, user_data=account_no),
+                    _readonly_position_item(
+                        self._make_table_item(
+                            self._masked_account_tail(account_no),
+                            sort_value=account_no,
+                            user_data=account_no,
+                        )
+                    ),
                 )
-                self.table_positions.setItem(row_index, 1, self._make_table_item(str(state.get("name") or state.get("code") or "")))
-                self.table_positions.setItem(row_index, 2, self._make_table_item(str(state.get("code") or "")))
-                self.table_positions.setItem(row_index, 3, self._make_number_item(state.get("avg_price")))
-                self.table_positions.setItem(row_index, 4, self._make_number_item(state.get("current_price")))
-                self.table_positions.setItem(row_index, 5, self._make_number_item(state.get("eval_profit"), signed=True))
-                self.table_positions.setItem(row_index, 6, self._make_number_item(state.get("eval_rate"), digits=2, rate=True, signed=True))
-                self.table_positions.setItem(row_index, 7, self._make_number_item(int(state.get("qty") or 0)))
-                self.table_positions.setItem(row_index, 8, self._make_table_item(self._build_position_strategy_text(state)))
-                self.table_positions.setItem(row_index, 9, self._make_table_item(self._build_position_news_status_text(state)))
+                self.table_positions.setItem(row_index, 1, _readonly_position_item(self._make_table_item(str(state.get("name") or state.get("code") or ""))))
+                self.table_positions.setItem(row_index, 2, _readonly_position_item(self._make_table_item(str(state.get("code") or ""))))
+                self.table_positions.setItem(row_index, 3, _readonly_position_item(self._make_number_item(state.get("avg_price"))))
+                self.table_positions.setItem(row_index, 4, _readonly_position_item(self._make_number_item(state.get("current_price"))))
+                self.table_positions.setItem(row_index, 5, _readonly_position_item(self._make_number_item(state.get("eval_profit"), signed=True)))
+                self.table_positions.setItem(row_index, 6, _readonly_position_item(self._make_number_item(state.get("eval_rate"), digits=2, rate=True, signed=True)))
+                self.table_positions.setItem(row_index, 7, _readonly_position_item(self._make_number_item(int(state.get("qty") or 0))))
+                take_profit_pct_item = self._make_table_item(
+                    self._format_number_text(take_profit_info.get("take_profit_pct"), 2),
+                    align_right=True,
+                    sort_value=float(take_profit_info.get("take_profit_pct") or 0.0),
+                )
+                take_profit_pct_item.setFlags(take_profit_pct_item.flags() | Qt.ItemIsEditable)
+                self.table_positions.setItem(row_index, 8, take_profit_pct_item)
+                self.table_positions.setItem(row_index, 9, _readonly_position_item(self._make_number_item(take_profit_info.get("take_profit_price"))))
+                self.table_positions.setItem(row_index, 10, _readonly_position_item(self._make_table_item(str(take_profit_info.get("status_text") or "-"))))
+                self.table_positions.setItem(row_index, 11, _readonly_position_item(self._make_table_item(self._build_position_strategy_text(state))))
+                self.table_positions.setItem(row_index, 12, _readonly_position_item(self._make_table_item(self._build_position_news_status_text(state))))
 
             order_rows = self.persistence.fetchall("SELECT * FROM open_orders WHERE unfilled_qty > 0 ORDER BY account_no, updated_at DESC, order_no DESC")
             self.table_open_orders.setRowCount(len(order_rows))
@@ -6284,6 +6372,7 @@ class MainWindow(QMainWindow):
             self.table_positions.setUpdatesEnabled(True)
             self.table_open_orders.setUpdatesEnabled(True)
             self.table_positions.setSortingEnabled(True)
+            self._operations_position_item_guard = False
 
         if self._is_scope_tab_active():
             self._schedule_refresh_scope(160)

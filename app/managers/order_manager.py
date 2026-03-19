@@ -409,6 +409,7 @@ class OrderManager(QObject):
             active_state.get("take_profit_order_active")
             or active_state.get("take_profit_order_pending")
             or active_state.get("pending_exit_switch")
+            or active_state.get("pending_take_profit_replace")
         )
 
     def _clear_take_profit_reservation_state(self, active_state, clear_pending_exit=False):
@@ -470,6 +471,25 @@ class OrderManager(QObject):
         )
         return dict(row) if row else None
 
+    def _find_existing_sell_open_order_for_position(self, account_no, code):
+        rows = self.persistence.fetchall(
+            "SELECT * FROM open_orders WHERE account_no=? AND code=? AND unfilled_qty>0 ORDER BY updated_at DESC, order_no DESC",
+            (str(account_no or "").strip(), str(code or "").strip()),
+        )
+        for row in rows:
+            open_order = dict(row)
+            raw_payload = self._safe_json_dict(open_order.get("raw_json") or "{}")
+            try:
+                if raw_payload and self._is_buy_payload(raw_payload):
+                    continue
+            except Exception:
+                pass
+            order_gubun = str(open_order.get("order_gubun") or raw_payload.get("order_gubun") or "").strip()
+            if "매수" in order_gubun:
+                continue
+            return open_order
+        return None
+
     def _seconds_since_ts(self, ts_text):
         ts_text = str(ts_text or "").strip()
         if not ts_text:
@@ -488,7 +508,7 @@ class OrderManager(QObject):
         active_state = dict(active_state or {})
         if self._has_take_profit_reservation(active_state):
             return active_state
-        take_profit_config = self._get_take_profit_strategy_config(sell_strategy_nos)
+        take_profit_config = self._resolve_take_profit_strategy_config(active_state, sell_strategy_nos)
         if not take_profit_config:
             return active_state
         account_no = str(position_row.get("account_no") or cycle.get("account_no") or "").strip()
@@ -526,6 +546,9 @@ class OrderManager(QObject):
             "take_profit_strategy_name": str(take_profit_config.get("strategy_name") or ""),
             "take_profit_pct": float(take_profit_config.get("take_profit_pct") or 0.0),
         })
+        active_state.pop("pending_take_profit_replace", None)
+        active_state.pop("pending_take_profit_replace_cancel_requested", None)
+        active_state.pop("pending_take_profit_replace_requested_at", None)
         self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
         self.persistence.execute(
             "UPDATE tracked_symbols SET has_open_order=1, current_state='SELL_ORDER_PENDING', updated_at=? WHERE code=?",
@@ -581,6 +604,16 @@ class OrderManager(QObject):
         })
         self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
         self.log_emitted.emit("⚠️ 손절/전환 매도를 위해 익절 예약 주문을 교체 대기합니다: {0} / {1}".format(account_no, code))
+        return active_state
+
+    def _arm_take_profit_replace(self, account_no, code, cycle, active_state, take_profit_pct):
+        active_state = dict(active_state or {})
+        active_state["take_profit_pct_override"] = float(take_profit_pct or 0.0)
+        active_state["pending_take_profit_replace"] = True
+        active_state["pending_take_profit_replace_cancel_requested"] = False
+        active_state["pending_take_profit_replace_requested_at"] = self.persistence.now_ts()
+        self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+        self.log_emitted.emit("📝 익절값 변경 대기: {0} / {1} / {2:.2f}%".format(account_no, code, float(take_profit_pct or 0.0)))
         return active_state
 
     def _build_pending_exit_evaluation(self, active_state):
@@ -659,6 +692,245 @@ class OrderManager(QObject):
             if isinstance(cycle_state, dict):
                 active_state.update(dict(cycle_state or {}))
         return active_state
+
+    def _get_default_sell_strategy_nos(self):
+        if self.strategy_manager is None:
+            return []
+        try:
+            policy = self.strategy_manager.get_default_strategy_policy() or {}
+            raw = json.loads(policy.get("sell_strategy_nos_json") or "[]")
+        except Exception:
+            raw = []
+        try:
+            return list(self.strategy_manager.normalize_strategy_nos("sell", raw))
+        except Exception:
+            return [int(value) for value in list(raw or []) if str(value or "").strip().isdigit()]
+
+    def _resolve_take_profit_strategy_config(self, active_state, sell_strategy_nos):
+        active_state = dict(active_state or {})
+        config = dict(self._get_take_profit_strategy_config(sell_strategy_nos) or {})
+        override_pct = float(active_state.get("take_profit_pct_override") or 0.0)
+        if override_pct > 0:
+            if not config:
+                config = {
+                    "strategy_no": 0,
+                    "strategy_name": "익절 사용자설정",
+                    "strategy_type": "take_profit",
+                }
+            config["take_profit_pct"] = override_pct
+        return config
+
+    def _build_external_active_sell_state(self, account_no, code, position_row=None, active_state=None):
+        position_row = dict(position_row or {})
+        active_state = dict(active_state or {})
+        now = self.persistence.now_ts()
+        merged = {
+            "entry_source": str(active_state.get("entry_source") or "external_position"),
+            "entry_slot_no": active_state.get("entry_slot_no"),
+            "policy_source": str(active_state.get("policy_source") or "external_position"),
+            "applied_sell_strategy_nos": list(active_state.get("applied_sell_strategy_nos") or self._get_default_sell_strategy_nos()),
+            "buy_expression_items": list(active_state.get("buy_expression_items") or []),
+            "news_min_score": int(active_state.get("news_min_score") or 0),
+            "news_trade_min_score": int(active_state.get("news_trade_min_score") or 0),
+            "account_no": account_no,
+            "code": code,
+            "detected_at": str(active_state.get("detected_at") or position_row.get("updated_at") or now),
+            "buy_filled_at": str(active_state.get("buy_filled_at") or position_row.get("updated_at") or now),
+        }
+        merged.update(active_state)
+        return merged
+
+    def _ensure_position_management_cycle(self, account_no, code, position_row=None):
+        account_no = str(account_no or "").strip()
+        code = str(code or "").strip()
+        if not account_no or not code:
+            return None
+        cycle = self._find_open_cycle(account_no, code)
+        if cycle:
+            return cycle
+        if position_row is None:
+            row = self.persistence.fetchone(
+                "SELECT * FROM positions WHERE account_no=? AND code=? AND qty>0",
+                (account_no, code),
+            )
+            position_row = dict(row) if row else {}
+        else:
+            position_row = dict(position_row or {})
+        if not position_row or int(position_row.get("qty") or 0) <= 0:
+            return None
+        active_state = self._build_external_active_sell_state(
+            account_no,
+            code,
+            position_row=position_row,
+            active_state=self._safe_json_dict(position_row.get("active_sell_state_json") or "{}"),
+        )
+        cycle_id = "ext_{0}_{1}_{2}".format(account_no[-4:] or "acct", code, uuid.uuid4().hex[:8])
+        now = self.persistence.now_ts()
+        extra_obj = {
+            "entry_source": "external_position",
+            "policy_source": "external_position",
+            "active_sell_state": active_state,
+        }
+        self.persistence.execute(
+            """
+            INSERT INTO trade_cycles (
+                cycle_id, trade_date, account_no, code, name,
+                entry_detected_at, buy_order_at, buy_filled_at,
+                source_conditions_json, buy_filters_json, sell_filters_json,
+                news_scores_json, status, pnl_realized, extra_json
+            ) VALUES (?, ?, ?, ?, ?, ?, '', ?, '[]', '[]', '[]', '{}', 'HOLDING', 0, ?)
+            """,
+            (
+                cycle_id,
+                self.persistence.today_str(),
+                account_no,
+                code,
+                str(position_row.get("name") or code),
+                now,
+                str(position_row.get("updated_at") or now),
+                json.dumps(extra_obj, ensure_ascii=False),
+            ),
+        )
+        self._save_position_active_sell_state(account_no, code, active_state)
+        return self._find_open_cycle(account_no, code)
+
+    def _sync_take_profit_reservation_from_open_order(self, account_no, code, cycle, position_row, active_state, open_order):
+        active_state = dict(active_state or {})
+        open_order = dict(open_order or {})
+        order_no = str(open_order.get("order_no") or "").strip()
+        order_price = float(open_order.get("order_price") or 0.0)
+        unfilled_qty = int(open_order.get("unfilled_qty") or 0)
+        avg_price = float((position_row or {}).get("avg_price") or 0.0)
+        active_state["take_profit_order_active"] = order_price > 0 and unfilled_qty > 0
+        active_state["take_profit_order_pending"] = order_price > 0 and unfilled_qty > 0
+        active_state["take_profit_order_no"] = order_no
+        active_state["take_profit_order_price"] = order_price
+        active_state["take_profit_order_qty"] = unfilled_qty
+        if order_price > 0 and avg_price > 0 and float(active_state.get("take_profit_pct") or 0.0) <= 0:
+            active_state["take_profit_pct"] = round(((order_price - avg_price) / avg_price) * 100.0, 2)
+        self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+        return active_state
+
+    def _restore_position_take_profit_management(self, account_no, code, cycle=None, position_row=None):
+        account_no = str(account_no or "").strip()
+        code = str(code or "").strip()
+        if not account_no or not code:
+            return False
+        if position_row is None:
+            row = self.persistence.fetchone(
+                "SELECT * FROM positions WHERE account_no=? AND code=? AND qty>0",
+                (account_no, code),
+            )
+            position_row = dict(row) if row else {}
+        else:
+            position_row = dict(position_row or {})
+        if not position_row or int(position_row.get("qty") or 0) <= 0:
+            return False
+        cycle = cycle or self._ensure_position_management_cycle(account_no, code, position_row=position_row)
+        if not cycle:
+            return False
+        active_state = self._build_external_active_sell_state(
+            account_no,
+            code,
+            position_row=position_row,
+            active_state=self._get_cycle_active_sell_state(cycle=cycle, position_row=position_row),
+        )
+        sell_strategy_nos = list(active_state.get("applied_sell_strategy_nos") or self._get_default_sell_strategy_nos())
+        active_state["applied_sell_strategy_nos"] = sell_strategy_nos
+        current_sell_order = self._find_existing_sell_open_order_for_position(account_no, code)
+        if current_sell_order:
+            if float(current_sell_order.get("order_price") or 0.0) > 0:
+                active_state = self._sync_take_profit_reservation_from_open_order(
+                    account_no,
+                    code,
+                    cycle,
+                    position_row,
+                    active_state,
+                    current_sell_order,
+                )
+                if active_state.get("pending_take_profit_replace") and not active_state.get("pending_take_profit_replace_cancel_requested"):
+                    ok = self._request_cancel_open_sell(cycle, current_sell_order)
+                    if ok:
+                        active_state["pending_take_profit_replace_cancel_requested"] = True
+                        active_state["pending_take_profit_replace_requested_at"] = self.persistence.now_ts()
+                        self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+                    return ok
+                if active_state.get("pending_exit_switch"):
+                    return self._reconcile_pending_exit_switch(account_no, code, cycle=cycle, position_row=position_row, active_state=active_state)
+                return False
+            return False
+        if active_state.get("pending_exit_switch"):
+            return self._reconcile_pending_exit_switch(account_no, code, cycle=cycle, position_row=position_row, active_state=active_state)
+        if active_state.get("pending_take_profit_replace"):
+            active_state = self._clear_take_profit_reservation_state(active_state, clear_pending_exit=False)
+            ok = bool(self._ensure_take_profit_reservation(position_row, cycle, active_state, sell_strategy_nos))
+            if ok:
+                active_state = self._get_cycle_active_sell_state(cycle=cycle, position_row=position_row)
+                active_state.pop("pending_take_profit_replace", None)
+                active_state.pop("pending_take_profit_replace_cancel_requested", None)
+                active_state.pop("pending_take_profit_replace_requested_at", None)
+                self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+            return ok
+        return bool(self._ensure_take_profit_reservation(position_row, cycle, active_state, sell_strategy_nos))
+
+    def describe_take_profit_state(self, state):
+        state = dict(state or {})
+        active_state = dict(state.get("active_sell_state") or {})
+        sell_strategy_nos = list(state.get("applied_sell_strategy_nos") or active_state.get("applied_sell_strategy_nos") or [])
+        config = self._resolve_take_profit_strategy_config(active_state, sell_strategy_nos)
+        take_profit_pct = float(config.get("take_profit_pct") or active_state.get("take_profit_pct") or 0.0)
+        avg_price = float(state.get("avg_price") or 0.0)
+        take_profit_price = self._round_price_to_tick(avg_price * (1.0 + take_profit_pct / 100.0), direction="up") if avg_price > 0 and take_profit_pct > 0 else 0
+        if active_state.get("pending_exit_switch"):
+            status = "손절 전환중"
+        elif active_state.get("pending_take_profit_replace"):
+            status = "익절 변경중"
+        elif active_state.get("take_profit_order_active") or active_state.get("take_profit_order_pending"):
+            status = "익절 주문중"
+        elif take_profit_pct > 0:
+            status = "익절 대기"
+        else:
+            status = "-"
+        return {
+            "take_profit_pct": take_profit_pct,
+            "take_profit_price": take_profit_price,
+            "status_text": status,
+        }
+
+    def set_position_take_profit_pct(self, account_no, code, take_profit_pct):
+        account_no = str(account_no or "").strip()
+        code = str(code or "").strip()
+        try:
+            take_profit_pct = float(take_profit_pct or 0.0)
+        except Exception:
+            return False
+        if not account_no or not code or take_profit_pct <= 0:
+            return False
+        position_row = self.persistence.fetchone(
+            "SELECT * FROM positions WHERE account_no=? AND code=? AND qty>0",
+            (account_no, code),
+        )
+        if not position_row:
+            return False
+        position_row = dict(position_row)
+        cycle = self._ensure_position_management_cycle(account_no, code, position_row=position_row)
+        if not cycle:
+            return False
+        active_state = self._build_external_active_sell_state(
+            account_no,
+            code,
+            position_row=position_row,
+            active_state=self._get_cycle_active_sell_state(cycle=cycle, position_row=position_row),
+        )
+        active_state["take_profit_pct_override"] = take_profit_pct
+        current_sell_order = self._find_existing_sell_open_order_for_position(account_no, code)
+        if current_sell_order and float(current_sell_order.get("order_price") or 0.0) > 0:
+            active_state = self._arm_take_profit_replace(account_no, code, cycle, active_state, take_profit_pct)
+        else:
+            active_state = self._clear_take_profit_reservation_state(active_state, clear_pending_exit=False)
+            active_state["take_profit_pct_override"] = take_profit_pct
+            self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+        return bool(self._restore_position_take_profit_management(account_no, code, cycle=cycle, position_row=position_row))
 
     def _update_take_profit_state_from_sell_payload(self, active_state, payload, filled_qty, unfilled_qty, remaining_qty=None):
         active_state = dict(active_state or {})
@@ -2255,6 +2527,12 @@ class OrderManager(QObject):
                     self.persistence.now_ts(),
                 ),
             )
+            persisted_row = self.persistence.fetchone(
+                "SELECT * FROM positions WHERE account_no=? AND code=?",
+                (account_no, code),
+            )
+            if persisted_row:
+                self._ensure_position_management_cycle(account_no, code, position_row=dict(persisted_row))
         old_rows = self.persistence.fetchall("SELECT code FROM positions WHERE account_no=?", (account_no,))
         removed_codes = []
         for old_row in old_rows:
@@ -2355,10 +2633,24 @@ class OrderManager(QObject):
                 ),
             )
         affected = list(incoming_codes.union(before_codes))
+        holding_rows = self.persistence.fetchall(
+            "SELECT * FROM positions WHERE account_no=? AND qty>0 ORDER BY code",
+            (account_no,),
+        )
+        holding_map = {
+            str(row["code"] or "").strip(): dict(row)
+            for row in holding_rows
+            if str(row["code"] or "").strip()
+        }
+        managed_codes = list(set(affected).union(set(holding_map.keys())))
         self.persistence.write_event("outstanding_orders_sync", payload)
         self._refresh_tracked_symbol_flags(affected)
-        for code in affected:
-            self._reconcile_pending_exit_switch(account_no, code)
+        for code in managed_codes:
+            position_row = holding_map.get(code)
+            if position_row:
+                self._restore_position_take_profit_management(account_no, code, position_row=position_row)
+            else:
+                self._reconcile_pending_exit_switch(account_no, code)
         self.positions_changed.emit()
         self.trade_cycles_changed.emit()
         self.summaries_changed.emit()
@@ -2548,6 +2840,8 @@ class OrderManager(QObject):
                     if self._current_position_qty(account_no, code) > 0:
                         self._save_position_active_sell_state(account_no, code, active_state)
                 self._reconcile_pending_exit_switch(account_no, code, cycle=cycle, active_state=active_state)
+                if self._current_position_qty(account_no, code) > 0:
+                    self._restore_position_take_profit_management(account_no, code, cycle=cycle)
             self.persistence.write_event('chejan_order', payload)
             self.rebuild_daily_summaries()
             self.positions_changed.emit()
@@ -2590,6 +2884,18 @@ class OrderManager(QObject):
                 "UPDATE tracked_symbols SET is_holding=1, current_state='HOLDING', updated_at=? WHERE code=?",
                 (self.persistence.now_ts(), code),
             )
+            position_row = self.persistence.fetchone(
+                "SELECT * FROM positions WHERE account_no=? AND code=? AND qty>0",
+                (account_no, code),
+            )
+            if position_row:
+                cycle = self._ensure_position_management_cycle(account_no, code, position_row=dict(position_row))
+                self._restore_position_take_profit_management(
+                    account_no,
+                    code,
+                    cycle=cycle,
+                    position_row=dict(position_row),
+                )
         else:
             self.persistence.execute("DELETE FROM positions WHERE account_no=? AND code=?", (account_no, code))
             if not self._has_any_position(code):
