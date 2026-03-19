@@ -516,6 +516,12 @@ class OrderManager(QObject):
             extra.get("exit_market_metrics"),
             active_state.get("exit_market_metrics"),
         )
+        latest_chejan = dict(extra.get("latest_chejan") or {})
+        ref_price = self._to_price(latest_chejan.get("fill_price"))
+        if ref_price <= 0:
+            ref_price = self._to_price(latest_chejan.get("current_price"))
+        if ref_price <= 0:
+            ref_price = float((exit_market_metrics or {}).get("current_price") or 0.0)
         extra_payload = {
             "buy_filled_at": str(cycle_row.get("buy_filled_at") or ""),
             "sell_filled_at": str(cycle_row.get("sell_filled_at") or ""),
@@ -540,7 +546,7 @@ class OrderManager(QObject):
             "code": str(cycle_row.get("code") or ""),
             "name": str(cycle_row.get("name") or cycle_row.get("code") or ""),
             "avg_price": 0.0,
-            "ref_price": 0.0,
+            "ref_price": ref_price,
             "eval_profit": 0.0,
             "realized_profit": realized_profit,
             "contribution_profit": realized_profit,
