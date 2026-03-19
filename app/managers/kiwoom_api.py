@@ -450,6 +450,27 @@ class KiwoomApiClient(QObject):
             return None
         return dict(item.get("value") or {})
 
+    def _get_latest_cached_snapshot_by_prefix(self, cache_map, cache_prefix, max_age_sec=None, now_dt=None):
+        cache_prefix = str(cache_prefix or "").strip()
+        if not cache_prefix:
+            return None
+        now_dt = now_dt or datetime.datetime.now()
+        best_dt = None
+        best_value = None
+        for cache_key, raw_item in list((cache_map or {}).items()):
+            if not str(cache_key or "").startswith(cache_prefix):
+                continue
+            item = dict(raw_item or {})
+            cached_at = item.get("cached_at")
+            if not isinstance(cached_at, datetime.datetime):
+                continue
+            if max_age_sec is not None and (now_dt - cached_at).total_seconds() > float(max_age_sec):
+                continue
+            if best_dt is None or cached_at > best_dt:
+                best_dt = cached_at
+                best_value = dict(item.get("value") or {})
+        return dict(best_value or {}) if best_value else None
+
     def _set_cached_snapshot(self, cache_map, cache_key, value, now_dt=None):
         if not cache_key:
             return
@@ -496,6 +517,61 @@ class KiwoomApiClient(QObject):
     def _get_intraday_reference_cache_key(self, code, target_dt=None, lookback_days=5):
         target_dt = target_dt or datetime.datetime.now()
         return "{0}|{1}|{2}".format(str(code or "").strip(), target_dt.strftime("%Y%m%d%H%M"), int(lookback_days or 5))
+
+    def get_cached_quote_snapshot(self, code, now_dt=None):
+        return dict(self._get_cached_quote_snapshot(code, now_dt=now_dt) or {})
+
+    def get_cached_daily_reference_stats(self, code, target_dt=None, lookback_days=5, max_age_sec=None, exact_only=False):
+        code = str(code or "").strip()
+        if not code:
+            return {}
+        target_dt = target_dt or datetime.datetime.now()
+        cache_key = self._get_daily_reference_cache_key(code, target_dt=target_dt, lookback_days=lookback_days)
+        ttl_sec = self._daily_reference_cache_ttl(target_dt) if max_age_sec is None else float(max_age_sec)
+        cached_stats = self._get_cached_snapshot(
+            self._daily_reference_cache,
+            cache_key,
+            ttl_sec,
+            now_dt=target_dt,
+        )
+        if cached_stats is not None:
+            return dict(cached_stats or {})
+        if exact_only:
+            return {}
+        prefix = "{0}|".format(code)
+        fallback = self._get_latest_cached_snapshot_by_prefix(
+            self._daily_reference_cache,
+            prefix,
+            max_age_sec=ttl_sec,
+            now_dt=target_dt,
+        )
+        return dict(fallback or {})
+
+    def get_cached_intraday_reference_stats(self, code, target_dt=None, lookback_days=5, max_age_sec=None, exact_only=False):
+        code = str(code or "").strip()
+        if not code:
+            return {}
+        target_dt = target_dt or datetime.datetime.now()
+        cache_key = self._get_intraday_reference_cache_key(code, target_dt=target_dt, lookback_days=lookback_days)
+        ttl_sec = float(self._intraday_reference_cache_ttl_sec if max_age_sec is None else max_age_sec)
+        cached_stats = self._get_cached_snapshot(
+            self._intraday_reference_cache,
+            cache_key,
+            ttl_sec,
+            now_dt=target_dt,
+        )
+        if cached_stats is not None:
+            return dict(cached_stats or {})
+        if exact_only:
+            return {}
+        prefix = "{0}|{1}".format(code, target_dt.strftime("%Y%m%d"))
+        fallback = self._get_latest_cached_snapshot_by_prefix(
+            self._intraday_reference_cache,
+            prefix,
+            max_age_sec=ttl_sec,
+            now_dt=target_dt,
+        )
+        return dict(fallback or {})
 
     def request_current_price_snapshot(self, code, timeout_ms=1200):
         snapshot = self.request_quote_snapshot(code, timeout_ms=timeout_ms)

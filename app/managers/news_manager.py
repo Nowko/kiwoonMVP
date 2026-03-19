@@ -727,17 +727,19 @@ class NaverNewsManager(QObject):
                     symbol_meta["reference_price_basis"] = symbol_meta.get("reference_price_basis") or "tracked_intraday_cached"
                     selected_info = intraday_info
                 elif market_open:
-                    intraday_stats = dict(
-                        self.kiwoom_client.request_intraday_reference_stats(
-                            code,
-                            target_dt=now_dt,
-                            lookback_days=5,
-                            timeout_ms=3200,
-                            max_pages=4,
-                            allow_quote_fallback=False,
-                            seed_snapshot=live_quote_seed,
-                        ) or {}
-                    )
+                    intraday_stats = {}
+                    if hasattr(self.kiwoom_client, "get_cached_intraday_reference_stats"):
+                        try:
+                            intraday_stats = dict(
+                                self.kiwoom_client.get_cached_intraday_reference_stats(
+                                    code,
+                                    target_dt=now_dt,
+                                    lookback_days=5,
+                                    max_age_sec=900,
+                                ) or {}
+                            )
+                        except Exception:
+                            intraday_stats = {}
                     intraday_info = self._apply_metric_stats(
                         symbol_meta,
                         intraday_stats,
@@ -755,7 +757,19 @@ class NaverNewsManager(QObject):
                     )
 
                     if need_daily_fallback:
-                        daily_stats = dict(self.kiwoom_client.request_daily_reference_stats(code, target_dt=now_dt, lookback_days=5) or {})
+                        daily_stats = {}
+                        if hasattr(self.kiwoom_client, "get_cached_daily_reference_stats"):
+                            try:
+                                daily_stats = dict(
+                                    self.kiwoom_client.get_cached_daily_reference_stats(
+                                        code,
+                                        target_dt=now_dt,
+                                        lookback_days=5,
+                                        max_age_sec=1800,
+                                    ) or {}
+                                )
+                            except Exception:
+                                daily_stats = {}
                         daily_info = self._apply_metric_stats(
                             symbol_meta,
                             daily_stats,
@@ -768,13 +782,19 @@ class NaverNewsManager(QObject):
                         cached_daily_volume_ratio = self._positive_float(symbol_meta.get("volume_ratio_5d"))
                         cached_daily_turnover_ratio = self._positive_float(symbol_meta.get("turnover_ratio_5d"))
                         if cached_daily_volume_ratio <= 0 and cached_daily_turnover_ratio <= 0:
-                            daily_stats = dict(
-                                self.kiwoom_client.request_daily_reference_stats(
-                                    code,
-                                    target_dt=now_dt,
-                                    lookback_days=5,
-                                ) or {}
-                            )
+                            daily_stats = {}
+                            if hasattr(self.kiwoom_client, "get_cached_daily_reference_stats"):
+                                try:
+                                    daily_stats = dict(
+                                        self.kiwoom_client.get_cached_daily_reference_stats(
+                                            code,
+                                            target_dt=now_dt,
+                                            lookback_days=5,
+                                            max_age_sec=21600,
+                                        ) or {}
+                                    )
+                                except Exception:
+                                    daily_stats = {}
                             daily_info = self._apply_metric_stats(
                                 symbol_meta,
                                 daily_stats,
@@ -792,7 +812,19 @@ class NaverNewsManager(QObject):
                             symbol_meta["reference_price_basis"] = symbol_meta.get("reference_price_basis") or "tracked_reference_cached"
                         selected_info = daily_info
                     else:
-                        daily_stats = dict(self.kiwoom_client.request_daily_reference_stats(code, target_dt=now_dt, lookback_days=5) or {})
+                        daily_stats = {}
+                        if hasattr(self.kiwoom_client, "get_cached_daily_reference_stats"):
+                            try:
+                                daily_stats = dict(
+                                    self.kiwoom_client.get_cached_daily_reference_stats(
+                                        code,
+                                        target_dt=now_dt,
+                                        lookback_days=5,
+                                        max_age_sec=21600,
+                                    ) or {}
+                                )
+                            except Exception:
+                                daily_stats = {}
                         try:
                             quote_snapshot = dict(getattr(self.kiwoom_client, "get_realtime_snapshot", lambda _code: {})(code) or {})
                         except Exception:

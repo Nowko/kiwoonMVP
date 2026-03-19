@@ -456,27 +456,83 @@ class ConditionCatalogManager(QObject):
                 snapshot["current_price"] = master_last_price
         return snapshot
 
-    def _build_reference_metrics(self, code, now_dt, quote, use_intraday=True):
+    def _build_reference_metrics(self, code, now_dt, quote, use_intraday=True, allow_blocking=False):
         quote = dict(quote or {})
         market_open = self._is_regular_market_hours(now_dt)
+        reference = {}
         if market_open and use_intraday:
-            reference = self.kiwoom_client.request_intraday_reference_stats(
-                code,
-                target_dt=now_dt,
-                lookback_days=5,
-                timeout_ms=3200,
-                max_pages=4,
-                allow_quote_fallback=False,
-                seed_snapshot=quote,
-            ) or {}
+            if hasattr(self.kiwoom_client, "get_cached_intraday_reference_stats"):
+                try:
+                    reference = dict(
+                        self.kiwoom_client.get_cached_intraday_reference_stats(
+                            code,
+                            target_dt=now_dt,
+                            lookback_days=5,
+                            max_age_sec=900,
+                        ) or {}
+                    )
+                except Exception:
+                    reference = {}
+            if not reference and hasattr(self.kiwoom_client, "get_cached_daily_reference_stats"):
+                try:
+                    reference = dict(
+                        self.kiwoom_client.get_cached_daily_reference_stats(
+                            code,
+                            target_dt=now_dt,
+                            lookback_days=5,
+                            max_age_sec=1800,
+                        ) or {}
+                    )
+                except Exception:
+                    reference = {}
+            if not reference and allow_blocking:
+                reference = self.kiwoom_client.request_intraday_reference_stats(
+                    code,
+                    target_dt=now_dt,
+                    lookback_days=5,
+                    timeout_ms=3200,
+                    max_pages=4,
+                    allow_quote_fallback=False,
+                    seed_snapshot=quote,
+                ) or {}
         else:
-            reference = self.kiwoom_client.request_daily_reference_stats(code, target_dt=now_dt, lookback_days=5) or {}
+            if hasattr(self.kiwoom_client, "get_cached_daily_reference_stats"):
+                try:
+                    reference = dict(
+                        self.kiwoom_client.get_cached_daily_reference_stats(
+                            code,
+                            target_dt=now_dt,
+                            lookback_days=5,
+                            max_age_sec=21600,
+                        ) or {}
+                    )
+                except Exception:
+                    reference = {}
+            if not reference and allow_blocking:
+                reference = self.kiwoom_client.request_daily_reference_stats(code, target_dt=now_dt, lookback_days=5) or {}
             if float(reference.get("reference_price") or 0.0) <= 0 and float(quote.get("current_price") or 0.0) > 0:
                 reference["reference_price"] = float(quote.get("current_price") or 0.0)
             if float(reference.get("current_volume") or 0.0) <= 0 and float(quote.get("current_volume") or 0.0) > 0:
                 reference["current_volume"] = float(quote.get("current_volume") or 0.0)
             if float(reference.get("current_turnover") or 0.0) <= 0 and float(quote.get("current_turnover") or 0.0) > 0:
                 reference["current_turnover"] = float(quote.get("current_turnover") or 0.0)
+        if not reference:
+            reference = {
+                "target_hhmm": now_dt.strftime("%H%M"),
+                "avg_volume": 0.0,
+                "avg_turnover": 0.0,
+                "days_count": 0,
+                "current_volume": float(quote.get("current_volume") or 0.0),
+                "current_turnover": float(quote.get("current_turnover") or 0.0),
+                "reference_price": float(quote.get("current_price") or 0.0),
+                "vwap_intraday": float(quote.get("vwap_intraday") or 0.0),
+                "volume_ratio": 0.0,
+                "turnover_ratio": 0.0,
+                "metric_mode": "live_snapshot",
+                "latest_day": now_dt.strftime("%Y%m%d"),
+                "volume_compare_label": "실시간 스냅샷",
+                "turnover_compare_label": "실시간 스냅샷",
+            }
         detected_price = float(quote.get("current_price") or reference.get("reference_price") or 0.0)
         detected_volume = float(reference.get("current_volume") or quote.get("current_volume") or 0.0)
         detected_turnover = float(reference.get("current_turnover") or quote.get("current_turnover") or 0.0)
@@ -605,7 +661,7 @@ class ConditionCatalogManager(QObject):
         now = self.persistence.now_ts()
         now_dt = datetime.datetime.now()
         quote = dict(self._get_fast_quote_snapshot(code) or {})
-        built = self._build_reference_metrics(code, now_dt, quote, use_intraday=True)
+        built = self._build_reference_metrics(code, now_dt, quote, use_intraday=True, allow_blocking=False)
         detected_price = float(built.get("detected_price") or 0.0)
         if detected_price <= 0:
             detected_price = float(row["detected_price"] or 0.0)
@@ -629,7 +685,7 @@ class ConditionCatalogManager(QObject):
         metrics = {}
         detected_price = float(quote.get("current_price") or 0.0)
         if refresh_reference:
-            built = self._build_reference_metrics(code, now_dt, quote, use_intraday=True)
+            built = self._build_reference_metrics(code, now_dt, quote, use_intraday=True, allow_blocking=False)
             metrics = dict(built.get("metrics") or {})
             detected_price = float(built.get("detected_price") or detected_price or 0.0)
         else:

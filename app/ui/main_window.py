@@ -264,7 +264,7 @@ class MainWindow(QMainWindow):
 
         self._connection_watchdog_timer.start(2000)
         self._maintenance_watchdog_timer.start(30000)
-        self._live_reference_poll_timer.start(700)
+        self._live_reference_poll_timer.start(1500)
         if self.startup_context.get("auto_recover"):
             reason = self.startup_context.get("recover_reason") or "자동복구"
             self.append_log("♻️ 자동복구 재시작 완료: {0}".format(reason))
@@ -3951,6 +3951,14 @@ class MainWindow(QMainWindow):
 
     def _poll_realtime_strategy_reference_labels(self):
         if not self.isVisible():
+            return
+        current_widget = self.right_tabs.currentWidget() if hasattr(self, "right_tabs") else None
+        selected_code, _selected_name = self._selected_watch_symbol()
+        if (
+            current_widget != getattr(self, "realtime_reference_tab_widget", None)
+            and current_widget != getattr(self, "news_watch_tab_widget", None)
+            and not str(selected_code or "").strip()
+        ):
             return
         self._schedule_refresh_realtime_strategy_reference_labels(120)
 
