@@ -3,7 +3,7 @@ import datetime
 import json
 import os
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
 
 class DailyWatchSnapshotManager(QObject):
@@ -13,6 +13,10 @@ class DailyWatchSnapshotManager(QObject):
         super(DailyWatchSnapshotManager, self).__init__(parent)
         self.paths = paths
         self._day_cache = {}
+        self._dirty_dates = set()
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self.flush_pending_days)
         self.ensure_dir()
 
     def ensure_dir(self):
@@ -94,6 +98,21 @@ class DailyWatchSnapshotManager(QObject):
                     os.remove(tmp_path)
             except Exception:
                 pass
+
+    def _mark_day_dirty(self, date_key, delay_ms=1500):
+        date_key = str(date_key or "").strip()
+        if not date_key:
+            return
+        self._dirty_dates.add(date_key)
+        if self._save_timer.isActive():
+            return
+        self._save_timer.start(max(250, int(delay_ms or 1500)))
+
+    def flush_pending_days(self):
+        dirty_dates = list(sorted(self._dirty_dates))
+        self._dirty_dates.clear()
+        for date_key in dirty_dates:
+            self._save_day(date_key)
 
     def _build_live_snapshot(self, live_snapshot, symbol_meta=None):
         live_snapshot = dict(live_snapshot or {})
@@ -192,7 +211,7 @@ class DailyWatchSnapshotManager(QObject):
             "symbol_meta": self._merge_keep_latest_non_missing(existing.get("symbol_meta") or {}, built_meta),
         }
         symbols[code] = new_entry
-        self._save_day(date_key)
+        self._mark_day_dirty(date_key)
         return dict(new_entry)
 
     def capture_realtime_reference(self, code, name="", live_snapshot=None, source="realtime_reference", target_dt=None):
@@ -231,7 +250,7 @@ class DailyWatchSnapshotManager(QObject):
             "symbol_meta": existing_meta,
         }
         symbols[code] = entry
-        self._save_day(date_key)
+        self._mark_day_dirty(date_key)
         return dict(entry)
 
     def get_entry(self, code, target_dt=None):

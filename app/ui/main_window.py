@@ -7456,6 +7456,11 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
+            if self.daily_watch_snapshot_manager is not None and hasattr(self.daily_watch_snapshot_manager, "flush_pending_days"):
+                self.daily_watch_snapshot_manager.flush_pending_days()
+        except Exception:
+            pass
+        try:
             if self.file_log_manager is not None and hasattr(self.file_log_manager, "flush_pending_lines"):
                 self.file_log_manager.flush_pending_lines()
         except Exception:
