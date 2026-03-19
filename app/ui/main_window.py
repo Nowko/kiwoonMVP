@@ -241,6 +241,13 @@ class MainWindow(QMainWindow):
         self._deferred_account_sync_timer.setSingleShot(True)
         self._deferred_account_sync_timer.timeout.connect(self._run_deferred_account_sync)
         self._startup_deferred_sync_pending = False
+        self._log_flush_timer = QTimer(self)
+        self._log_flush_timer.setSingleShot(True)
+        self._log_flush_timer.timeout.connect(self._flush_log_buffer)
+        self._log_ui_pending_records = []
+        self._log_ui_pending_group_index = {}
+        self._log_flush_active_ms = 220
+        self._log_flush_idle_ms = 1200
 
         self.setWindowTitle("Kiwoom News Trader MVP")
         self._build_ui()
@@ -3563,12 +3570,205 @@ class MainWindow(QMainWindow):
         line = str(text or "")
         if not line:
             return
-        self.log_view.appendPlainText(line)
         if self.file_log_manager is not None:
             try:
                 self.file_log_manager.write_line(line)
             except Exception:
                 pass
+        bucket = self._log_bucket_key(line)
+        if bucket:
+            record_index = self._log_ui_pending_group_index.get(bucket)
+            if record_index is None:
+                self._log_ui_pending_group_index[bucket] = len(self._log_ui_pending_records)
+                self._log_ui_pending_records.append(
+                    {
+                        "kind": "group",
+                        "bucket": bucket,
+                        "count": 1,
+                        "last_line": line,
+                    }
+                )
+            else:
+                try:
+                    record = self._log_ui_pending_records[int(record_index)]
+                except Exception:
+                    record = None
+                if isinstance(record, dict):
+                    record["count"] = int(record.get("count", 0) or 0) + 1
+                    record["last_line"] = line
+                else:
+                    self._log_ui_pending_group_index[bucket] = len(self._log_ui_pending_records)
+                    self._log_ui_pending_records.append(
+                        {
+                            "kind": "group",
+                            "bucket": bucket,
+                            "count": 1,
+                            "last_line": line,
+                        }
+                    )
+        else:
+            self._log_ui_pending_records.append({"kind": "line", "text": line})
+        self._schedule_log_flush()
+
+    def _schedule_log_flush(self):
+        delay_ms = self._log_flush_active_ms if self._is_log_tab_active() else self._log_flush_idle_ms
+        if self._log_flush_timer.isActive():
+            remaining = int(self._log_flush_timer.remainingTime() or 0)
+            if remaining > 0 and remaining <= delay_ms:
+                return
+            self._log_flush_timer.stop()
+        self._log_flush_timer.start(delay_ms)
+
+    def _log_bucket_key(self, line):
+        text = str(line or "").strip()
+        if not text:
+            return ""
+        for prefix in [
+            "PIPELINE START:",
+            "BUY BLOCKED:",
+            "NEWS SEARCH QUEUED:",
+            "NEWS SEARCH SKIPPED:",
+            "NEWS RESPONSE:",
+            "NEWS BELOW SCORE:",
+            "📡 실시간 시장데이터 등록:",
+            "💾 런타임 스냅샷 저장",
+        ]:
+            if text.startswith(prefix):
+                return prefix
+        return ""
+
+    def _format_grouped_log_line(self, bucket, count, last_line):
+        bucket = str(bucket or "").strip()
+        last_line = str(last_line or "").strip()
+        count = max(1, int(count or 0))
+        if count <= 1:
+            return last_line
+        if bucket == "💾 런타임 스냅샷 저장":
+            return u"💾 런타임 스냅샷 저장 {0}건".format(count)
+        detail = last_line[len(bucket):].strip() if last_line.startswith(bucket) else last_line
+        if detail:
+            return u"{0} {1}건 묶음 / 마지막: {2}".format(bucket, count, detail)
+        return u"{0} {1}건 묶음".format(bucket, count)
+
+    def _flush_log_buffer(self):
+        if not getattr(self, "log_view", None):
+            self._log_ui_pending_records = []
+            self._log_ui_pending_group_index = {}
+            return
+        records = list(self._log_ui_pending_records or [])
+        self._log_ui_pending_records = []
+        self._log_ui_pending_group_index = {}
+        if not records:
+            return
+        lines = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            if record.get("kind") == "group":
+                lines.append(
+                    self._format_grouped_log_line(
+                        record.get("bucket", ""),
+                        record.get("count", 0),
+                        record.get("last_line", ""),
+                    )
+                )
+            else:
+                lines.append(str(record.get("text", "") or ""))
+        lines = [str(line or "") for line in lines if str(line or "")]
+        if not lines:
+            return
+        self.log_view.setUpdatesEnabled(False)
+        self.log_view.appendPlainText(line)
+        try:
+            self.log_view.appendPlainText("\n".join(lines))
+        finally:
+            self.log_view.setUpdatesEnabled(True)
+
+    def _log_bucket_key(self, line):
+        text = str(line or "").strip()
+        if not text:
+            return ""
+        if text.startswith("PIPELINE START:"):
+            return "pipeline_start"
+        if text.startswith("BUY BLOCKED:"):
+            return "buy_blocked"
+        if text.startswith("NEWS SEARCH QUEUED:"):
+            return "news_search_queued"
+        if text.startswith("NEWS SEARCH SKIPPED:"):
+            return "news_search_skipped"
+        if text.startswith("NEWS RESPONSE:"):
+            return "news_response"
+        if text.startswith("NEWS BELOW SCORE:"):
+            return "news_below_score"
+        if u"실시간 시장데이터 등록:" in text:
+            return "market_register"
+        if u"런타임 스냅샷 저장" in text:
+            return "runtime_snapshot"
+        return ""
+
+    def _format_grouped_log_line(self, bucket, count, last_line):
+        bucket = str(bucket or "").strip()
+        last_line = str(last_line or "").strip()
+        count = max(1, int(count or 0))
+        if count <= 1:
+            return last_line
+
+        label_map = {
+            "pipeline_start": "PIPELINE START:",
+            "buy_blocked": "BUY BLOCKED:",
+            "news_search_queued": "NEWS SEARCH QUEUED:",
+            "news_search_skipped": "NEWS SEARCH SKIPPED:",
+            "news_response": "NEWS RESPONSE:",
+            "news_below_score": "NEWS BELOW SCORE:",
+        }
+        if bucket == "runtime_snapshot":
+            return u"💾 런타임 스냅샷 저장 {0}건".format(count)
+
+        label = label_map.get(bucket, "")
+        if bucket == "market_register":
+            marker = u"실시간 시장데이터 등록:"
+            idx = last_line.find(marker)
+            detail = last_line[idx + len(marker):].strip() if idx >= 0 else last_line
+            label = u"📡 실시간 시장데이터 등록:"
+        else:
+            detail = last_line[len(label):].strip() if label and last_line.startswith(label) else last_line
+
+        if detail:
+            return u"{0} {1}건 묶음 / 마지막: {2}".format(label, count, detail)
+        return u"{0} {1}건 묶음".format(label or bucket, count)
+
+    def _flush_log_buffer(self):
+        if not getattr(self, "log_view", None):
+            self._log_ui_pending_records = []
+            self._log_ui_pending_group_index = {}
+            return
+        records = list(self._log_ui_pending_records or [])
+        self._log_ui_pending_records = []
+        self._log_ui_pending_group_index = {}
+        if not records:
+            return
+        lines = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            if record.get("kind") == "group":
+                lines.append(
+                    self._format_grouped_log_line(
+                        record.get("bucket", ""),
+                        record.get("count", 0),
+                        record.get("last_line", ""),
+                    )
+                )
+            else:
+                lines.append(str(record.get("text", "") or ""))
+        lines = [str(line or "") for line in lines if str(line or "")]
+        if not lines:
+            return
+        self.log_view.setUpdatesEnabled(False)
+        try:
+            self.log_view.appendPlainText("\n".join(lines))
+        finally:
+            self.log_view.setUpdatesEnabled(True)
 
     def _schedule_refresh_operations(self, delay_ms=250):
         self._operations_refresh_pending = True
