@@ -7374,8 +7374,20 @@ class MainWindow(QMainWindow):
             self._refresh_realtime_reference_table()
 
     def _on_realtime_market_state_changed(self, payload=None):
-        self._record_realtime_reference_snapshot(payload)
-        if self._is_realtime_reference_tab_active():
+        current_widget = self.right_tabs.currentWidget() if hasattr(self, "right_tabs") else None
+        realtime_tab_active = current_widget == getattr(self, "realtime_reference_tab_widget", None)
+        news_watch_visible = bool(
+            getattr(self, "lbl_news_watch_live_reference", None)
+            and self.lbl_news_watch_live_reference.isVisibleTo(self)
+        )
+        strategy_detail_visible = bool(
+            getattr(self, "lbl_strategy_detail_live_reference", None)
+            and self.lbl_strategy_detail_live_reference.isVisibleTo(self)
+        )
+        if realtime_tab_active:
+            self._record_realtime_reference_snapshot(payload)
+            return
+        if not (news_watch_visible or strategy_detail_visible):
             return
         code = str(((payload or {}) if isinstance(payload, dict) else {}).get("code") or "").strip()
         selected_code, _selected_name = self._selected_watch_symbol()
