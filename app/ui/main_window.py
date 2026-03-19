@@ -173,6 +173,14 @@ class MainWindow(QMainWindow):
         self._refresh_policy_logs_timer = QTimer(self)
         self._refresh_policy_logs_timer.setSingleShot(True)
         self._refresh_policy_logs_timer.timeout.connect(self.refresh_policy_logs)
+        self._refresh_scope_timer = QTimer(self)
+        self._refresh_scope_timer.setSingleShot(True)
+        self._refresh_scope_timer.timeout.connect(self.refresh_strategy_analysis)
+        self._tab_switch_refresh_timer = QTimer(self)
+        self._tab_switch_refresh_timer.setSingleShot(True)
+        self._tab_switch_refresh_timer.timeout.connect(self._run_pending_tab_switch_refresh)
+        self._pending_tab_switch_index = -1
+        self._tab_refresh_last_run = {}
         self._operations_refresh_pending = True
         self._policy_logs_refresh_pending = True
         self._scope_refresh_pending = True
@@ -3569,6 +3577,20 @@ class MainWindow(QMainWindow):
             return
         self._refresh_operations_timer.start(max(50, int(delay_ms or 250)))
 
+    def _schedule_refresh_scope(self, delay_ms=250):
+        self._scope_refresh_pending = True
+        if not self._is_scope_tab_active():
+            return
+        self._refresh_scope_timer.start(max(120, int(delay_ms or 250)))
+
+    def _tab_refresh_allowed(self, key, min_interval_ms):
+        now_monotonic = float(time.monotonic())
+        last_monotonic = float((self._tab_refresh_last_run or {}).get(str(key), 0.0) or 0.0)
+        if last_monotonic > 0 and (now_monotonic - last_monotonic) < (float(min_interval_ms or 0) / 1000.0):
+            return False
+        self._tab_refresh_last_run[str(key)] = now_monotonic
+        return True
+
     def _is_scope_tab_active(self):
         return (
             hasattr(self, "right_tabs")
@@ -5610,26 +5632,34 @@ class MainWindow(QMainWindow):
     def refresh_strategy_analysis(self):
         self._scope_refresh_pending = False
         rows = self._build_strategy_analysis_rows()
-        self.table_strategy_analysis.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
-            strategy_no = int(row.get("strategy_no") or 0)
-            self.table_strategy_analysis.setItem(row_index, 0, self._make_table_item(strategy_no if strategy_no > 0 else "-", align_right=True))
-            self._set_strategy_name_cell(
-                self.table_strategy_analysis,
-                row_index,
-                1,
-                str(row.get("strategy_name") or ""),
-                tooltip=str(row.get("strategy_name") or ""),
-            )
-            self.table_strategy_analysis.setItem(row_index, 2, self._make_table_item(str(row.get("strategy_type") or "")))
-            self.table_strategy_analysis.setItem(row_index, 3, self._make_number_item(row.get("entry_count") or 0))
-            self.table_strategy_analysis.setItem(row_index, 4, self._make_number_item(row.get("closed_count") or 0))
-            self.table_strategy_analysis.setItem(row_index, 5, self._make_number_item(row.get("win_count") or 0))
-            self.table_strategy_analysis.setItem(row_index, 6, self._make_number_item(row.get("loss_count") or 0))
-            self.table_strategy_analysis.setItem(row_index, 7, self._make_number_item(row.get("win_rate") or 0, digits=2, rate=True, suffix="%"))
-            self.table_strategy_analysis.setItem(row_index, 8, self._make_number_item(row.get("cumulative_pnl") or 0, signed=True))
-        self.refresh_daily_review_dates(preserve_selected=True)
-        self.refresh_daily_review_view()
+        self.table_strategy_analysis.setUpdatesEnabled(False)
+        self.table_daily_review_summary.setUpdatesEnabled(False)
+        self.table_daily_review_items.setUpdatesEnabled(False)
+        try:
+            self.table_strategy_analysis.setRowCount(len(rows))
+            for row_index, row in enumerate(rows):
+                strategy_no = int(row.get("strategy_no") or 0)
+                self.table_strategy_analysis.setItem(row_index, 0, self._make_table_item(strategy_no if strategy_no > 0 else "-", align_right=True))
+                self._set_strategy_name_cell(
+                    self.table_strategy_analysis,
+                    row_index,
+                    1,
+                    str(row.get("strategy_name") or ""),
+                    tooltip=str(row.get("strategy_name") or ""),
+                )
+                self.table_strategy_analysis.setItem(row_index, 2, self._make_table_item(str(row.get("strategy_type") or "")))
+                self.table_strategy_analysis.setItem(row_index, 3, self._make_number_item(row.get("entry_count") or 0))
+                self.table_strategy_analysis.setItem(row_index, 4, self._make_number_item(row.get("closed_count") or 0))
+                self.table_strategy_analysis.setItem(row_index, 5, self._make_number_item(row.get("win_count") or 0))
+                self.table_strategy_analysis.setItem(row_index, 6, self._make_number_item(row.get("loss_count") or 0))
+                self.table_strategy_analysis.setItem(row_index, 7, self._make_number_item(row.get("win_rate") or 0, digits=2, rate=True, suffix="%"))
+                self.table_strategy_analysis.setItem(row_index, 8, self._make_number_item(row.get("cumulative_pnl") or 0, signed=True))
+            self.refresh_daily_review_dates(preserve_selected=True)
+            self.refresh_daily_review_view()
+        finally:
+            self.table_strategy_analysis.setUpdatesEnabled(True)
+            self.table_daily_review_summary.setUpdatesEnabled(True)
+            self.table_daily_review_items.setUpdatesEnabled(True)
 
     def _translate_unfilled_policy(self, policy):
         mapping = {
@@ -5951,89 +5981,97 @@ class MainWindow(QMainWindow):
                 "api_total_profit": float(settings.get("api_total_profit", 0.0) or 0.0),
                 "api_realized_profit": float(settings.get("api_realized_profit", 0.0) or 0.0),
             }
-        self.table_accounts_summary.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
-            account_no = str(row["account_no"] or "")
-            live_summary = live_summary_map.get(account_no, {})
-            account_cash = dict(account_settings_map.get(account_no) or {})
-            api_deposit_cash = float(account_cash.get("deposit_cash", 0.0) or 0.0)
-            api_orderable_cash = float(account_cash.get("orderable_cash", 0.0) or 0.0)
-            api_estimated_assets = float(account_cash.get("estimated_assets", 0.0) or 0.0)
-            api_total_buy = float(account_cash.get("api_total_buy", 0.0) or 0.0)
-            api_total_eval = float(account_cash.get("api_total_eval", 0.0) or 0.0)
-            api_total_profit = float(account_cash.get("api_total_profit", 0.0) or 0.0)
-            api_realized_profit = float(account_cash.get("api_realized_profit", 0.0) or 0.0)
-            holding_count = int(live_summary.get("holding_count", row["holding_count"] or 0) or 0)
-            total_buy = api_total_buy if api_total_buy > 0 else float(live_summary.get("total_buy", 0.0) or 0.0)
-            total_eval = api_total_eval if api_total_eval > 0 else float(live_summary.get("total_eval", 0.0) or 0.0)
-            total_profit = api_total_profit if api_total_profit != 0 else float(row["eval_profit_total"] or 0)
-            holding_profit_total = float(live_summary.get("eval_profit_total", 0.0) or 0.0)
-            summary_realized_profit = float(row["realized_profit_total"] or 0)
-            cycle_realized_profit = float(cycle_realized_map.get(account_no, 0.0) or 0.0)
-            if api_realized_profit != 0:
-                realized_profit_total = api_realized_profit
-            elif api_total_profit != 0:
-                realized_profit_total = api_total_profit - holding_profit_total
-            elif summary_realized_profit != 0:
-                realized_profit_total = summary_realized_profit
-            else:
-                realized_profit_total = cycle_realized_profit
-            self.table_accounts_summary.setItem(
-                row_index,
-                0,
-                self._make_table_item(self._masked_account_tail(account_no), sort_value=account_no, user_data=account_no),
-            )
-            self.table_accounts_summary.setItem(row_index, 1, self._make_number_item(api_deposit_cash))
-            self.table_accounts_summary.setItem(row_index, 2, self._make_number_item(api_orderable_cash))
-            self.table_accounts_summary.setItem(row_index, 3, self._make_number_item(total_eval))
-            self.table_accounts_summary.setItem(row_index, 4, self._make_number_item(api_estimated_assets))
-            self.table_accounts_summary.setItem(row_index, 5, self._make_number_item(holding_count))
-            self.table_accounts_summary.setItem(row_index, 6, self._make_number_item(total_buy))
-            self.table_accounts_summary.setItem(row_index, 7, self._make_number_item(total_profit, signed=True))
-            self.table_accounts_summary.setItem(row_index, 8, self._make_number_item(realized_profit_total, signed=True))
+        self.table_accounts_summary.setUpdatesEnabled(False)
+        self.table_positions.setUpdatesEnabled(False)
+        self.table_open_orders.setUpdatesEnabled(False)
+        try:
+            self.table_accounts_summary.setRowCount(len(rows))
+            for row_index, row in enumerate(rows):
+                account_no = str(row["account_no"] or "")
+                live_summary = live_summary_map.get(account_no, {})
+                account_cash = dict(account_settings_map.get(account_no) or {})
+                api_deposit_cash = float(account_cash.get("deposit_cash", 0.0) or 0.0)
+                api_orderable_cash = float(account_cash.get("orderable_cash", 0.0) or 0.0)
+                api_estimated_assets = float(account_cash.get("estimated_assets", 0.0) or 0.0)
+                api_total_buy = float(account_cash.get("api_total_buy", 0.0) or 0.0)
+                api_total_eval = float(account_cash.get("api_total_eval", 0.0) or 0.0)
+                api_total_profit = float(account_cash.get("api_total_profit", 0.0) or 0.0)
+                api_realized_profit = float(account_cash.get("api_realized_profit", 0.0) or 0.0)
+                holding_count = int(live_summary.get("holding_count", row["holding_count"] or 0) or 0)
+                total_buy = api_total_buy if api_total_buy > 0 else float(live_summary.get("total_buy", 0.0) or 0.0)
+                total_eval = api_total_eval if api_total_eval > 0 else float(live_summary.get("total_eval", 0.0) or 0.0)
+                total_profit = api_total_profit if api_total_profit != 0 else float(row["eval_profit_total"] or 0)
+                holding_profit_total = float(live_summary.get("eval_profit_total", 0.0) or 0.0)
+                summary_realized_profit = float(row["realized_profit_total"] or 0)
+                cycle_realized_profit = float(cycle_realized_map.get(account_no, 0.0) or 0.0)
+                if api_realized_profit != 0:
+                    realized_profit_total = api_realized_profit
+                elif api_total_profit != 0:
+                    realized_profit_total = api_total_profit - holding_profit_total
+                elif summary_realized_profit != 0:
+                    realized_profit_total = summary_realized_profit
+                else:
+                    realized_profit_total = cycle_realized_profit
+                self.table_accounts_summary.setItem(
+                    row_index,
+                    0,
+                    self._make_table_item(self._masked_account_tail(account_no), sort_value=account_no, user_data=account_no),
+                )
+                self.table_accounts_summary.setItem(row_index, 1, self._make_number_item(api_deposit_cash))
+                self.table_accounts_summary.setItem(row_index, 2, self._make_number_item(api_orderable_cash))
+                self.table_accounts_summary.setItem(row_index, 3, self._make_number_item(total_eval))
+                self.table_accounts_summary.setItem(row_index, 4, self._make_number_item(api_estimated_assets))
+                self.table_accounts_summary.setItem(row_index, 5, self._make_number_item(holding_count))
+                self.table_accounts_summary.setItem(row_index, 6, self._make_number_item(total_buy))
+                self.table_accounts_summary.setItem(row_index, 7, self._make_number_item(total_profit, signed=True))
+                self.table_accounts_summary.setItem(row_index, 8, self._make_number_item(realized_profit_total, signed=True))
 
-        self.table_positions.setSortingEnabled(False)
-        self.table_positions.setRowCount(len(position_states))
-        for row_index, state in enumerate(position_states):
-            account_no = str(state.get("account_no") or "")
-            self.table_positions.setItem(
-                row_index,
-                0,
-                self._make_table_item(self._masked_account_tail(account_no), sort_value=account_no, user_data=account_no),
-            )
-            self.table_positions.setItem(row_index, 1, self._make_table_item(str(state.get("name") or state.get("code") or "")))
-            self.table_positions.setItem(row_index, 2, self._make_table_item(str(state.get("code") or "")))
-            self.table_positions.setItem(row_index, 3, self._make_number_item(state.get("avg_price")))
-            self.table_positions.setItem(row_index, 4, self._make_number_item(state.get("current_price")))
-            self.table_positions.setItem(row_index, 5, self._make_number_item(state.get("eval_profit"), signed=True))
-            self.table_positions.setItem(row_index, 6, self._make_number_item(state.get("eval_rate"), digits=2, rate=True, signed=True))
-            self.table_positions.setItem(row_index, 7, self._make_number_item(int(state.get("qty") or 0)))
-            self.table_positions.setItem(row_index, 8, self._make_table_item(self._build_position_strategy_text(state)))
-            self.table_positions.setItem(row_index, 9, self._make_table_item(self._build_position_news_status_text(state)))
-        self.table_positions.setSortingEnabled(True)
+            self.table_positions.setSortingEnabled(False)
+            self.table_positions.setRowCount(len(position_states))
+            for row_index, state in enumerate(position_states):
+                account_no = str(state.get("account_no") or "")
+                self.table_positions.setItem(
+                    row_index,
+                    0,
+                    self._make_table_item(self._masked_account_tail(account_no), sort_value=account_no, user_data=account_no),
+                )
+                self.table_positions.setItem(row_index, 1, self._make_table_item(str(state.get("name") or state.get("code") or "")))
+                self.table_positions.setItem(row_index, 2, self._make_table_item(str(state.get("code") or "")))
+                self.table_positions.setItem(row_index, 3, self._make_number_item(state.get("avg_price")))
+                self.table_positions.setItem(row_index, 4, self._make_number_item(state.get("current_price")))
+                self.table_positions.setItem(row_index, 5, self._make_number_item(state.get("eval_profit"), signed=True))
+                self.table_positions.setItem(row_index, 6, self._make_number_item(state.get("eval_rate"), digits=2, rate=True, signed=True))
+                self.table_positions.setItem(row_index, 7, self._make_number_item(int(state.get("qty") or 0)))
+                self.table_positions.setItem(row_index, 8, self._make_table_item(self._build_position_strategy_text(state)))
+                self.table_positions.setItem(row_index, 9, self._make_table_item(self._build_position_news_status_text(state)))
 
-        order_rows = self.persistence.fetchall("SELECT * FROM open_orders WHERE unfilled_qty > 0 ORDER BY account_no, updated_at DESC, order_no DESC")
-        self.table_open_orders.setRowCount(len(order_rows))
-        for row_index, row in enumerate(order_rows):
-            cycle = self.persistence.fetchone(
-                "SELECT * FROM trade_cycles WHERE account_no=? AND code=? ORDER BY buy_order_at DESC LIMIT 1",
-                (row["account_no"], row["code"]),
-            )
-            extra = self._safe_json_dict(cycle["extra_json"] if cycle else "{}")
-            stage_text = self._translate_unfilled_stage(cycle["status"], extra) if cycle else "-"
+            order_rows = self.persistence.fetchall("SELECT * FROM open_orders WHERE unfilled_qty > 0 ORDER BY account_no, updated_at DESC, order_no DESC")
+            self.table_open_orders.setRowCount(len(order_rows))
+            for row_index, row in enumerate(order_rows):
+                cycle = self.persistence.fetchone(
+                    "SELECT * FROM trade_cycles WHERE account_no=? AND code=? ORDER BY buy_order_at DESC LIMIT 1",
+                    (row["account_no"], row["code"]),
+                )
+                extra = self._safe_json_dict(cycle["extra_json"] if cycle else "{}")
+                stage_text = self._translate_unfilled_stage(cycle["status"], extra) if cycle else "-"
 
-            self.table_open_orders.setItem(row_index, 0, self._make_table_item(row["account_no"], sort_value=str(row["account_no"] or ""), user_data=str(row["account_no"] or "")))
-            self.table_open_orders.setItem(row_index, 1, self._make_table_item(row["order_no"]))
-            self.table_open_orders.setItem(row_index, 2, self._make_table_item(row["name"] or row["code"]))
-            self.table_open_orders.setItem(row_index, 3, self._make_table_item(row["code"]))
-            self.table_open_orders.setItem(row_index, 4, self._make_table_item(row["order_status"] or ""))
-            self.table_open_orders.setItem(row_index, 5, self._make_number_item(row["order_qty"]))
-            self.table_open_orders.setItem(row_index, 6, self._make_number_item(row["unfilled_qty"]))
-            self.table_open_orders.setItem(row_index, 7, self._make_number_item(row["order_price"]))
-            self.table_open_orders.setItem(row_index, 8, self._make_table_item(stage_text))
+                self.table_open_orders.setItem(row_index, 0, self._make_table_item(row["account_no"], sort_value=str(row["account_no"] or ""), user_data=str(row["account_no"] or "")))
+                self.table_open_orders.setItem(row_index, 1, self._make_table_item(row["order_no"]))
+                self.table_open_orders.setItem(row_index, 2, self._make_table_item(row["name"] or row["code"]))
+                self.table_open_orders.setItem(row_index, 3, self._make_table_item(row["code"]))
+                self.table_open_orders.setItem(row_index, 4, self._make_table_item(row["order_status"] or ""))
+                self.table_open_orders.setItem(row_index, 5, self._make_number_item(row["order_qty"]))
+                self.table_open_orders.setItem(row_index, 6, self._make_number_item(row["unfilled_qty"]))
+                self.table_open_orders.setItem(row_index, 7, self._make_number_item(row["order_price"]))
+                self.table_open_orders.setItem(row_index, 8, self._make_table_item(stage_text))
+        finally:
+            self.table_accounts_summary.setUpdatesEnabled(True)
+            self.table_positions.setUpdatesEnabled(True)
+            self.table_open_orders.setUpdatesEnabled(True)
+            self.table_positions.setSortingEnabled(True)
 
         if self._is_scope_tab_active():
-            self.refresh_strategy_analysis()
+            self._schedule_refresh_scope(160)
         else:
             self._scope_refresh_pending = True
 
@@ -6043,23 +6081,27 @@ class MainWindow(QMainWindow):
             return
         self._policy_logs_refresh_pending = False
         rows = self.persistence.fetchall("SELECT * FROM order_policy_logs ORDER BY log_id DESC LIMIT 100")
-        self.table_policy_logs.setRowCount(len(rows))
-        if hasattr(self, "lbl_policy_logs_empty"):
-            self.lbl_policy_logs_empty.setVisible(len(rows) <= 0)
-        for row_index, row in enumerate(rows):
-            detail = self._safe_json_dict(row["detail_json"] or "{}")
-            detail_text = []
-            for key in ["first_wait_sec", "second_wait_sec", "order_no", "unfilled_qty", "new_price", "price_source", "status"]:
-                if key in detail and detail.get(key) not in ["", None]:
-                    detail_text.append("%s=%s" % (key, detail.get(key)))
-            self.table_policy_logs.setItem(row_index, 0, QTableWidgetItem(row["ts"] or ""))
-            self.table_policy_logs.setItem(row_index, 1, QTableWidgetItem(row["account_no"] or ""))
-            self.table_policy_logs.setItem(row_index, 2, QTableWidgetItem(row["name"] or row["code"] or ""))
-            self.table_policy_logs.setItem(row_index, 3, QTableWidgetItem(row["code"] or ""))
-            self.table_policy_logs.setItem(row_index, 4, QTableWidgetItem(self._translate_unfilled_policy(row["policy"] or "")))
-            self.table_policy_logs.setItem(row_index, 5, QTableWidgetItem(str(row["stage"] or "")))
-            self.table_policy_logs.setItem(row_index, 6, QTableWidgetItem(str(row["action"] or "")))
-            self.table_policy_logs.setItem(row_index, 7, QTableWidgetItem(" / ".join(detail_text) if detail_text else "-"))
+        self.table_policy_logs.setUpdatesEnabled(False)
+        try:
+            self.table_policy_logs.setRowCount(len(rows))
+            if hasattr(self, "lbl_policy_logs_empty"):
+                self.lbl_policy_logs_empty.setVisible(len(rows) <= 0)
+            for row_index, row in enumerate(rows):
+                detail = self._safe_json_dict(row["detail_json"] or "{}")
+                detail_text = []
+                for key in ["first_wait_sec", "second_wait_sec", "order_no", "unfilled_qty", "new_price", "price_source", "status"]:
+                    if key in detail and detail.get(key) not in ["", None]:
+                        detail_text.append("%s=%s" % (key, detail.get(key)))
+                self.table_policy_logs.setItem(row_index, 0, QTableWidgetItem(row["ts"] or ""))
+                self.table_policy_logs.setItem(row_index, 1, QTableWidgetItem(row["account_no"] or ""))
+                self.table_policy_logs.setItem(row_index, 2, QTableWidgetItem(row["name"] or row["code"] or ""))
+                self.table_policy_logs.setItem(row_index, 3, QTableWidgetItem(row["code"] or ""))
+                self.table_policy_logs.setItem(row_index, 4, QTableWidgetItem(self._translate_unfilled_policy(row["policy"] or "")))
+                self.table_policy_logs.setItem(row_index, 5, QTableWidgetItem(str(row["stage"] or "")))
+                self.table_policy_logs.setItem(row_index, 6, QTableWidgetItem(str(row["action"] or "")))
+                self.table_policy_logs.setItem(row_index, 7, QTableWidgetItem(" / ".join(detail_text) if detail_text else "-"))
+        finally:
+            self.table_policy_logs.setUpdatesEnabled(True)
 
     def _translate_watch_state(self, state):
         return {
@@ -6546,28 +6588,41 @@ class MainWindow(QMainWindow):
         current_widget = self.right_tabs.widget(int(index)) if hasattr(self, "right_tabs") else None
         if current_widget != getattr(self, "news_watch_tab_widget", None):
             self._pause_news_watch_refresh()
+        else:
+            self._set_news_watch_loading(True, self._news_watch_loading_message(pending=True))
+        self._pending_tab_switch_index = int(index)
+        if self._tab_switch_refresh_timer.isActive():
+            self._tab_switch_refresh_timer.stop()
+        self._tab_switch_refresh_timer.start(140)
+
+    def _run_pending_tab_switch_refresh(self):
+        current_widget = self.right_tabs.currentWidget() if hasattr(self, "right_tabs") else None
         if current_widget == getattr(self, "realtime_reference_tab_widget", None):
-            self._refresh_realtime_reference_table()
-            self.refresh_realtime_capture_log()
-            self._schedule_refresh_realtime_strategy_reference_labels(80)
+            if self._tab_refresh_allowed("realtime_reference", 700):
+                self._schedule_realtime_reference_board_refresh(force_full=True)
+                self.refresh_realtime_capture_log()
+            self._schedule_refresh_realtime_strategy_reference_labels(120)
             return
         if current_widget == getattr(self, "news_watch_tab_widget", None):
             if self._news_watch_refresh_pending and not self._refresh_news_watch_timer.isActive():
                 self._set_news_watch_loading(True, self._news_watch_loading_message())
-                QTimer.singleShot(40, lambda: self._schedule_refresh_news_watch(120))
-            self._schedule_refresh_realtime_strategy_reference_labels(80)
+                self._schedule_refresh_news_watch(180)
+            self._schedule_refresh_realtime_strategy_reference_labels(120)
             return
         if current_widget == getattr(self, "operations_tab_widget", None):
             if self._operations_refresh_pending and not self._refresh_operations_timer.isActive():
-                QTimer.singleShot(30, lambda: self._schedule_refresh_operations(80))
+                if self._tab_refresh_allowed("operations", 1000):
+                    self._schedule_refresh_operations(150)
             return
         if current_widget == getattr(self, "scope_tab_widget", None):
             if self._scope_refresh_pending:
-                QTimer.singleShot(30, self.refresh_strategy_analysis)
+                if self._tab_refresh_allowed("scope", 2500):
+                    self._schedule_refresh_scope(180)
             return
         if current_widget == getattr(self, "log_tab_widget", None):
             if self._policy_logs_refresh_pending and not self._refresh_policy_logs_timer.isActive():
-                QTimer.singleShot(30, lambda: self._schedule_refresh_policy_logs(80))
+                if self._tab_refresh_allowed("policy_logs", 1000):
+                    self._schedule_refresh_policy_logs(150)
             return
         self._set_news_watch_loading(False)
 
