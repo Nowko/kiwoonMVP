@@ -3,6 +3,7 @@ import datetime
 import json
 import queue
 import threading
+import time
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -26,6 +27,7 @@ class DartAnalysisManager(QObject):
         self._pending_codes = set()
         self._pending_lock = threading.RLock()
         self._error_log_ts = {}
+        self._memory_signal_cache = {}
         self._analysis_thread = threading.Thread(
             target=self._analysis_worker_loop,
             name="dart-analysis-worker",
@@ -39,6 +41,9 @@ class DartAnalysisManager(QObject):
         self.gpt_service.refresh_from_credentials()
 
     def get_cached_signal(self, code, max_age_minutes=30):
+        memory_cached = self._get_memory_cached_signal(code, max_age_minutes=max_age_minutes)
+        if memory_cached:
+            return memory_cached
         if self.persistence is None:
             return {}
         code = str(code or "").strip()
@@ -55,7 +60,9 @@ class DartAnalysisManager(QObject):
             return {}
         if (datetime.datetime.now() - updated_at).total_seconds() > max(1, int(max_age_minutes or 30)) * 60:
             return {}
-        return self._row_to_result(row)
+        result = self._row_to_result(row)
+        self._set_memory_cached_signal(code, result)
+        return result
 
     def get_signal_for_news(self, name, code, days=180, fresh_max_age_minutes=30, stale_max_age_minutes=720):
         code = str(code or "").strip()
@@ -80,7 +87,7 @@ class DartAnalysisManager(QObject):
             use_cache=False,
             include_details=False,
             emit_logs=False,
-            persist=True,
+            persist=False,
         )
         self.request_analysis_refresh(name, code, days=days, allow_ai=True)
         return quick
@@ -118,6 +125,7 @@ class DartAnalysisManager(QObject):
             risk_disclosures = self.api_service.enrich_disclosures(risk_disclosures, force=False, max_age_hours=168)
             risk_disclosures = self.signal_service.filter_risky_financing_disclosures(risk_disclosures)
         signal_result = self.signal_service.score_signals(code, name, risk_disclosures)
+        self._set_memory_cached_signal(code, signal_result)
         if persist:
             self.signal_service.save_event_cache(risk_disclosures)
             self.signal_service.save_signal_summary(signal_result)
@@ -130,6 +138,7 @@ class DartAnalysisManager(QObject):
                     fallback=signal_result,
                 )
                 signal_result["gpt_analysis"] = dict(gpt_result or {})
+                self._set_memory_cached_signal(code, signal_result)
                 if persist:
                     self._save_gpt_payload(code, gpt_result)
                 if emit_logs:
@@ -180,6 +189,7 @@ class DartAnalysisManager(QObject):
                 with self._pending_lock:
                     self._pending_codes.discard(code)
                 self._analysis_job_queue.task_done()
+                time.sleep(0.2)
 
     def _emit_background_error(self, code, exc, min_interval_sec=300):
         now_dt = datetime.datetime.now()
@@ -254,3 +264,33 @@ class DartAnalysisManager(QObject):
             return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
         except Exception:
             return None
+
+    def _get_memory_cached_signal(self, code, max_age_minutes=30):
+        code = str(code or "").strip()
+        if not code:
+            return {}
+        item = self._memory_signal_cache.get(code)
+        if not item:
+            return {}
+        try:
+            cached_at = item.get("cached_at")
+            result = dict(item.get("result") or {})
+            if cached_at is None or not result:
+                return {}
+            if (datetime.datetime.now() - cached_at).total_seconds() > max(1, int(max_age_minutes or 30)) * 60:
+                return {}
+            return result
+        except Exception:
+            return {}
+
+    def _set_memory_cached_signal(self, code, signal_result):
+        code = str(code or "").strip()
+        if not code:
+            return
+        try:
+            self._memory_signal_cache[code] = {
+                "cached_at": datetime.datetime.now(),
+                "result": dict(signal_result or {}),
+            }
+        except Exception:
+            pass
