@@ -555,6 +555,16 @@ class TelegramFormatter(object):
         ]
         return self.format_lines("매도 체결", lines)
 
+    def format_trade_sell_filled(self, payload):
+        lines = [
+            "계좌: {0}".format(self._text(payload.get("account_no"))),
+            "종목: {0} ({1})".format(self._text(payload.get("name")), self._text(payload.get("code"))),
+            "체결 수량: {0}".format(self._fmt_int(payload.get("filled_qty"))),
+            "체결가: {0}".format(self._fmt_int(payload.get("filled_price"))),
+            "실현 손익: {0}".format(self._fmt_int(payload.get("cycle_realized"))),
+        ]
+        return self.format_lines("매도 체결", lines)
+
     def format_unfilled_policy_step(self, payload):
         lines = [
             "계좌: {0}".format(self._text(payload.get("account_no"))),
