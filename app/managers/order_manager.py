@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import datetime
 import json
+import math
 import uuid
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
@@ -153,12 +154,23 @@ class OrderManager(QObject):
             sell_strategy_nos = strategy_manager.normalize_strategy_nos("sell", json.loads(strategy_manager.get_default_strategy_policy()["sell_strategy_nos_json"] or '[]'))
             active_state["applied_sell_strategy_nos"] = sell_strategy_nos
         evaluation = strategy_manager.evaluate_sell_strategy_list(sell_strategy_nos, position, cycle_row=cycle, active_state=active_state)
+        current_active_state = dict(evaluation.get("active_state") or active_state or {})
         if evaluation.get("state_changed"):
-            self._save_position_active_sell_state(account_no, code, evaluation.get("active_state") or active_state)
-            if cycle:
-                extra_json = self._merge_json(cycle.get("extra_json"), {"active_sell_state": evaluation.get("active_state") or active_state})
-                self.persistence.execute("UPDATE trade_cycles SET extra_json=? WHERE cycle_id=?", (extra_json, cycle["cycle_id"]))
+            self._persist_cycle_active_sell_state(account_no, code, cycle, current_active_state)
+        take_profit_config = self._get_take_profit_strategy_config(sell_strategy_nos)
+        trigger_snapshot = self._build_sell_strategy_snapshot_from_evaluation(evaluation)
+        trigger_type = str(trigger_snapshot.get("trigger_sell_strategy_type") or "")
+        has_take_profit_order = self._has_take_profit_reservation(current_active_state)
+        if cycle and take_profit_config and not has_take_profit_order and not self._has_pending_sell(account_no, code, cycle):
+            if not (evaluation.get("passed") and trigger_type and trigger_type != "take_profit"):
+                current_active_state = self._ensure_take_profit_reservation(position, cycle, current_active_state, sell_strategy_nos)
+                has_take_profit_order = self._has_take_profit_reservation(current_active_state)
         if evaluation.get("passed"):
+            if has_take_profit_order:
+                if trigger_type and trigger_type != "take_profit":
+                    current_active_state = self._arm_pending_exit_switch(position, cycle, evaluation, current_active_state)
+                    self._reconcile_pending_exit_switch(account_no, code, cycle=cycle, position_row=position, active_state=current_active_state)
+                return evaluation
             self._submit_sell_for_position(position, cycle, evaluation, trigger_label="sell_strategy")
         return evaluation
 
@@ -339,6 +351,340 @@ class OrderManager(QObject):
             "buy_filled_at": buy_filled_at or "",
         }
         active_state.update(buy_strategy_snapshot)
+        return active_state
+
+    def _persist_cycle_active_sell_state(self, account_no, code, cycle, active_state):
+        active_state = dict(active_state or {})
+        if account_no and code:
+            self._save_position_active_sell_state(account_no, code, active_state)
+        if cycle:
+            extra_obj = self._load_cycle_extra(cycle)
+            extra_obj["active_sell_state"] = active_state
+            self.persistence.execute(
+                "UPDATE trade_cycles SET extra_json=? WHERE cycle_id=?",
+                (json.dumps(extra_obj, ensure_ascii=False), cycle["cycle_id"]),
+            )
+
+    def _get_take_profit_strategy_config(self, sell_strategy_nos):
+        manager = self.strategy_manager
+        if manager is None:
+            return {}
+        try:
+            strategy_nos = manager.normalize_strategy_nos("sell", sell_strategy_nos or [])
+        except Exception:
+            strategy_nos = list(sell_strategy_nos or [])
+        for strategy_no in strategy_nos:
+            row = manager.get_strategy_by_no("sell", strategy_no)
+            if not row:
+                continue
+            row = dict(row)
+            if not int(row.get("enabled") or 0):
+                continue
+            if str(row.get("strategy_type") or "") != "take_profit":
+                continue
+            params = self._safe_json_dict(row.get("params_json") or "{}")
+            take_profit_pct = float(params.get("take_profit_pct") or 0.0)
+            if take_profit_pct <= 0:
+                continue
+            return {
+                "strategy_no": int(row.get("strategy_no") or 0),
+                "strategy_name": str(row.get("strategy_name") or ""),
+                "strategy_type": "take_profit",
+                "take_profit_pct": take_profit_pct,
+            }
+        return {}
+
+    def _round_price_to_tick(self, price, direction="up"):
+        price = float(price or 0.0)
+        if price <= 0:
+            return 0
+        tick = max(1, int(self._get_tick_size(price) or 1))
+        if direction == "down":
+            return max(tick, int(price // tick) * tick)
+        return int(math.ceil(price / float(tick)) * tick)
+
+    def _has_take_profit_reservation(self, active_state):
+        active_state = dict(active_state or {})
+        return bool(
+            active_state.get("take_profit_order_active")
+            or active_state.get("take_profit_order_pending")
+            or active_state.get("pending_exit_switch")
+        )
+
+    def _clear_take_profit_reservation_state(self, active_state, clear_pending_exit=False):
+        active_state = dict(active_state or {})
+        for key in [
+            "take_profit_order_active",
+            "take_profit_order_pending",
+            "take_profit_order_no",
+            "take_profit_order_price",
+            "take_profit_order_qty",
+            "take_profit_order_requested_at",
+            "take_profit_last_fill_at",
+            "take_profit_filled_qty",
+            "take_profit_strategy_no",
+            "take_profit_strategy_name",
+            "take_profit_pct",
+        ]:
+            active_state.pop(key, None)
+        if clear_pending_exit:
+            for key in [
+                "pending_exit_switch",
+                "pending_exit_reason",
+                "pending_exit_strategy_no",
+                "pending_exit_strategy_type",
+                "pending_exit_strategy_name",
+                "pending_exit_requested_at",
+                "pending_exit_cancel_requested",
+                "pending_exit_cancel_requested_at",
+                "pending_exit_submitted_at",
+            ]:
+                active_state.pop(key, None)
+        return active_state
+
+    def _find_take_profit_open_order(self, account_no, code, active_state=None):
+        account_no = str(account_no or "").strip()
+        code = str(code or "").strip()
+        active_state = dict(active_state or {})
+        if not account_no or not code:
+            return None
+        order_no = str(active_state.get("take_profit_order_no") or "").strip()
+        if order_no:
+            row = self.persistence.fetchone(
+                "SELECT * FROM open_orders WHERE account_no=? AND code=? AND order_no=? AND unfilled_qty>0 ORDER BY updated_at DESC LIMIT 1",
+                (account_no, code, order_no),
+            )
+            if row:
+                return dict(row)
+        order_price = float(active_state.get("take_profit_order_price") or 0.0)
+        if order_price > 0:
+            row = self.persistence.fetchone(
+                "SELECT * FROM open_orders WHERE account_no=? AND code=? AND unfilled_qty>0 AND ABS(order_price - ?) < 0.5 ORDER BY updated_at DESC LIMIT 1",
+                (account_no, code, order_price),
+            )
+            if row:
+                return dict(row)
+        row = self.persistence.fetchone(
+            "SELECT * FROM open_orders WHERE account_no=? AND code=? AND unfilled_qty>0 ORDER BY updated_at DESC LIMIT 1",
+            (account_no, code),
+        )
+        return dict(row) if row else None
+
+    def _seconds_since_ts(self, ts_text):
+        ts_text = str(ts_text or "").strip()
+        if not ts_text:
+            return None
+        try:
+            ts_dt = datetime.datetime.strptime(ts_text, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+        return max(0.0, (datetime.datetime.now() - ts_dt).total_seconds())
+
+    def _ensure_take_profit_reservation(self, position_row, cycle, active_state, sell_strategy_nos):
+        if self.execution_mode != "live":
+            return dict(active_state or {})
+        if not cycle or not getattr(self.kiwoom_client, "connected", False):
+            return dict(active_state or {})
+        active_state = dict(active_state or {})
+        if self._has_take_profit_reservation(active_state):
+            return active_state
+        take_profit_config = self._get_take_profit_strategy_config(sell_strategy_nos)
+        if not take_profit_config:
+            return active_state
+        account_no = str(position_row.get("account_no") or cycle.get("account_no") or "").strip()
+        code = str(position_row.get("code") or cycle.get("code") or "").strip()
+        name = str(position_row.get("name") or cycle.get("name") or code)
+        qty = int(position_row.get("qty") or 0)
+        avg_price = float(position_row.get("avg_price") or 0.0)
+        if not account_no or not code or qty <= 0 or avg_price <= 0:
+            return active_state
+        target_price = self._round_price_to_tick(avg_price * (1.0 + (take_profit_config.get("take_profit_pct") or 0.0) / 100.0), direction="up")
+        if target_price <= 0:
+            return active_state
+        ok = self.kiwoom_client.send_order(
+            rq_name="SELLTP_%s" % str(cycle.get("cycle_id") or uuid.uuid4().hex)[-6:],
+            screen_no="7005",
+            account_no=account_no,
+            order_type=2,
+            code=code,
+            qty=qty,
+            price=target_price,
+            hoga_gb="00",
+            original_order_no="",
+        )
+        if not ok:
+            return active_state
+        now = self.persistence.now_ts()
+        active_state.update({
+            "take_profit_order_active": True,
+            "take_profit_order_pending": True,
+            "take_profit_order_no": "",
+            "take_profit_order_price": target_price,
+            "take_profit_order_qty": qty,
+            "take_profit_order_requested_at": now,
+            "take_profit_strategy_no": int(take_profit_config.get("strategy_no") or 0),
+            "take_profit_strategy_name": str(take_profit_config.get("strategy_name") or ""),
+            "take_profit_pct": float(take_profit_config.get("take_profit_pct") or 0.0),
+        })
+        self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+        self.persistence.execute(
+            "UPDATE tracked_symbols SET has_open_order=1, current_state='SELL_ORDER_PENDING', updated_at=? WHERE code=?",
+            (now, code),
+        )
+        self.log_emitted.emit("⏳ 익절 예약 주문 등록: {0} / {1} / {2}주 / {3}".format(account_no, code, qty, target_price))
+        self._emit_trade_state_refresh()
+        return active_state
+
+    def _request_cancel_open_sell(self, cycle, open_order):
+        account_no = str(open_order.get("account_no") or "")
+        code = str(open_order.get("code") or "")
+        order_no = str(open_order.get("order_no") or "")
+        unfilled_qty = int(open_order.get("unfilled_qty") or 0)
+        if not account_no or not code or not order_no or unfilled_qty <= 0:
+            return False
+        if not self._is_regular_market_hours():
+            self.log_emitted.emit("⏸️ 장후에는 익절 예약 매도 취소를 차단합니다: {0} / {1}".format(account_no, code))
+            return False
+        ok = self.kiwoom_client.send_order(
+            rq_name="SELLCANCEL_%s" % str(cycle.get("cycle_id") or uuid.uuid4().hex)[-6:],
+            screen_no="7006",
+            account_no=account_no,
+            order_type=4,
+            code=code,
+            qty=unfilled_qty,
+            price=0,
+            hoga_gb="00",
+            original_order_no=order_no,
+        )
+        if ok:
+            self.log_emitted.emit("↩️ 익절 예약 매도 취소 요청: {0} / {1} / order={2}".format(account_no, code, order_no))
+        return ok
+
+    def _arm_pending_exit_switch(self, position_row, cycle, evaluation, active_state):
+        if not cycle:
+            return dict(active_state or {})
+        account_no = str(position_row.get("account_no") or cycle.get("account_no") or "").strip()
+        code = str(position_row.get("code") or cycle.get("code") or "").strip()
+        active_state = dict(active_state or {})
+        if active_state.get("pending_exit_switch"):
+            return active_state
+        trigger_snapshot = self._build_sell_strategy_snapshot_from_evaluation(evaluation)
+        now = self.persistence.now_ts()
+        active_state.update({
+            "pending_exit_switch": True,
+            "pending_exit_reason": str(trigger_snapshot.get("trigger_sell_reason") or evaluation.get("trigger_reason") or "sell_switch"),
+            "pending_exit_strategy_no": int(trigger_snapshot.get("trigger_sell_strategy_no") or 0),
+            "pending_exit_strategy_type": str(trigger_snapshot.get("trigger_sell_strategy_type") or ""),
+            "pending_exit_strategy_name": str(trigger_snapshot.get("trigger_sell_strategy_name") or ""),
+            "pending_exit_requested_at": now,
+            "pending_exit_cancel_requested": False,
+        })
+        self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+        self.log_emitted.emit("⚠️ 손절/전환 매도를 위해 익절 예약 주문을 교체 대기합니다: {0} / {1}".format(account_no, code))
+        return active_state
+
+    def _build_pending_exit_evaluation(self, active_state):
+        active_state = dict(active_state or {})
+        strategy_type = str(active_state.get("pending_exit_strategy_type") or "stop_loss")
+        strategy_name = str(active_state.get("pending_exit_strategy_name") or strategy_type)
+        strategy_no = int(active_state.get("pending_exit_strategy_no") or 0)
+        reason = str(active_state.get("pending_exit_reason") or "sell_switch")
+        return {
+            "passed": True,
+            "trigger_reason": reason,
+            "trigger_strategy_no": strategy_no,
+            "results": [
+                {
+                    "strategy_no": strategy_no,
+                    "strategy_type": strategy_type,
+                    "strategy_name": strategy_name,
+                    "passed": True,
+                    "reason": reason,
+                }
+            ],
+        }
+
+    def _reconcile_pending_exit_switch(self, account_no, code, cycle=None, position_row=None, active_state=None):
+        account_no = str(account_no or "").strip()
+        code = str(code or "").strip()
+        if not account_no or not code:
+            return False
+        cycle = cycle or self._find_open_cycle(account_no, code)
+        if position_row is None:
+            row = self.persistence.fetchone("SELECT * FROM positions WHERE account_no=? AND code=? AND qty>0", (account_no, code))
+            position_row = dict(row) if row else {}
+        active_state = dict(active_state or self._get_cycle_active_sell_state(cycle, position_row))
+        if not active_state.get("pending_exit_switch"):
+            return False
+        open_order = self._find_take_profit_open_order(account_no, code, active_state)
+        if open_order:
+            order_no = str(open_order.get("order_no") or "").strip()
+            if order_no and str(active_state.get("take_profit_order_no") or "").strip() != order_no:
+                active_state["take_profit_order_no"] = order_no
+                active_state["take_profit_order_active"] = True
+                active_state["take_profit_order_pending"] = True
+                self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+            if not active_state.get("pending_exit_cancel_requested"):
+                ok = self._request_cancel_open_sell(cycle or {}, open_order)
+                if ok:
+                    active_state["pending_exit_cancel_requested"] = True
+                    active_state["pending_exit_cancel_requested_at"] = self.persistence.now_ts()
+                    self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+                return ok
+            return False
+        request_age = self._seconds_since_ts(active_state.get("take_profit_order_requested_at"))
+        if active_state.get("take_profit_order_active") and not str(active_state.get("take_profit_order_no") or "").strip():
+            if request_age is not None and request_age < 3.0:
+                return False
+        qty = int(position_row.get("qty") or 0)
+        if qty <= 0:
+            active_state = self._clear_take_profit_reservation_state(active_state, clear_pending_exit=True)
+            self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+            return False
+        evaluation = self._build_pending_exit_evaluation(active_state)
+        ok = self._submit_sell_for_position(position_row, cycle, evaluation, trigger_label="pending_exit_switch", ignore_active_state=True)
+        if ok:
+            active_state = self._clear_take_profit_reservation_state(active_state, clear_pending_exit=True)
+            active_state["pending_exit_submitted_at"] = self.persistence.now_ts()
+            self._persist_cycle_active_sell_state(account_no, code, cycle, active_state)
+        return ok
+
+    def _get_cycle_active_sell_state(self, cycle=None, position_row=None):
+        active_state = {}
+        if position_row:
+            active_state = self._safe_json_dict(position_row.get("active_sell_state_json") or "{}")
+        if cycle:
+            extra = self._load_cycle_extra(cycle)
+            cycle_state = extra.get("active_sell_state")
+            if isinstance(cycle_state, dict):
+                active_state.update(dict(cycle_state or {}))
+        return active_state
+
+    def _update_take_profit_state_from_sell_payload(self, active_state, payload, filled_qty, unfilled_qty, remaining_qty=None):
+        active_state = dict(active_state or {})
+        if not self._has_take_profit_reservation(active_state):
+            return active_state
+        order_no = str(payload.get("order_no") or "").strip()
+        stored_order_no = str(active_state.get("take_profit_order_no") or "").strip()
+        if order_no and not stored_order_no:
+            active_state["take_profit_order_no"] = order_no
+            stored_order_no = order_no
+        if stored_order_no and order_no and stored_order_no != order_no:
+            return active_state
+        order_state_text = str(payload.get("order_status") or payload.get("status") or "").strip()
+        if filled_qty > 0:
+            active_state["take_profit_last_fill_at"] = self.persistence.now_ts()
+            active_state["take_profit_filled_qty"] = int(active_state.get("take_profit_filled_qty") or 0) + int(filled_qty)
+            active_state["take_profit_order_pending"] = unfilled_qty > 0
+            active_state["take_profit_order_active"] = unfilled_qty > 0 and (remaining_qty is None or remaining_qty > 0)
+            if unfilled_qty <= 0 or (remaining_qty is not None and remaining_qty <= 0):
+                active_state = self._clear_take_profit_reservation_state(active_state, clear_pending_exit=not bool(active_state.get("pending_exit_switch")))
+            return active_state
+        if ("취소" in order_state_text or "거부" in order_state_text) and unfilled_qty <= 0:
+            active_state = self._clear_take_profit_reservation_state(active_state, clear_pending_exit=False)
+            return active_state
+        active_state["take_profit_order_active"] = True
+        active_state["take_profit_order_pending"] = True
         return active_state
 
     def _load_cycle_extra(self, cycle):
@@ -835,23 +1181,27 @@ class OrderManager(QObject):
             (json.dumps(active_state or {}, ensure_ascii=False), self.persistence.now_ts(), account_no, code),
         )
 
-    def _has_pending_sell(self, account_no, code, cycle=None):
+    def _has_pending_sell(self, account_no, code, cycle=None, ignore_active_state=False):
         if cycle and str(cycle.get("status") or "") in ["SELL_PENDING", "SELL_PARTIAL"]:
             return True
+        if cycle and not ignore_active_state:
+            active_state = self._get_cycle_active_sell_state(cycle=cycle)
+            if self._has_take_profit_reservation(active_state):
+                return True
         row = self.persistence.fetchone(
             "SELECT order_no FROM open_orders WHERE account_no=? AND code=? AND unfilled_qty>0 LIMIT 1",
             (account_no, code),
         )
         return row is not None
 
-    def _submit_sell_for_position(self, position_row, cycle, sell_evaluation, trigger_label="auto_sell"):
+    def _submit_sell_for_position(self, position_row, cycle, sell_evaluation, trigger_label="auto_sell", ignore_active_state=False):
         account_no = str(position_row.get("account_no") or "")
         code = str(position_row.get("code") or "")
         name = str(position_row.get("name") or code)
         qty = int(position_row.get("qty") or 0)
         if not account_no or not code or qty <= 0:
             return False
-        if self._has_pending_sell(account_no, code, cycle):
+        if self._has_pending_sell(account_no, code, cycle, ignore_active_state=ignore_active_state):
             return False
         now = self.persistence.now_ts()
         reason = sell_evaluation.get("trigger_reason") or trigger_label
@@ -2007,6 +2357,8 @@ class OrderManager(QObject):
         affected = list(incoming_codes.union(before_codes))
         self.persistence.write_event("outstanding_orders_sync", payload)
         self._refresh_tracked_symbol_flags(affected)
+        for code in affected:
+            self._reconcile_pending_exit_switch(account_no, code)
         self.positions_changed.emit()
         self.trade_cycles_changed.emit()
         self.summaries_changed.emit()
@@ -2105,6 +2457,19 @@ class OrderManager(QObject):
                             "unfilled_qty": unfilled_qty,
                         },
                     )
+                    if unfilled_qty <= 0:
+                        position_after_fill = self.persistence.fetchone(
+                            "SELECT * FROM positions WHERE account_no=? AND code=? AND qty>0",
+                            (account_no, code),
+                        )
+                        if position_after_fill:
+                            active_state = dict((extra_obj or {}).get("active_sell_state") or {})
+                            self._ensure_take_profit_reservation(
+                                dict(position_after_fill),
+                                cycle,
+                                active_state,
+                                list(active_state.get("applied_sell_strategy_nos") or []),
+                            )
                 else:
                     order_state_text = str(payload.get("order_status") or payload.get("status") or "").strip()
                     if unfilled_qty <= 0 and ("취소" in order_state_text or "거부" in order_state_text):
@@ -2136,15 +2501,24 @@ class OrderManager(QObject):
                         (new_status, extra_json, cycle["cycle_id"]),
                     )
             else:
+                extra_obj = self._load_cycle_extra(cycle)
+                active_state = self._get_cycle_active_sell_state(cycle=cycle)
                 if filled_qty > 0:
-                    extra_obj = self._load_cycle_extra(cycle)
                     extra_obj["order_no"] = payload.get("order_no", "")
                     extra_obj["latest_chejan"] = payload
                     exit_market_metrics = self._build_entry_market_metrics(code, captured_at=now)
                     self._apply_exit_market_metrics(extra_obj, exit_market_metrics)
-                    extra_json = json.dumps(extra_obj, ensure_ascii=False)
                     self._apply_sell_fill(account_no, code, filled_qty, filled_price, cycle)
                     remaining = self._current_position_qty(account_no, code)
+                    active_state = self._update_take_profit_state_from_sell_payload(
+                        active_state,
+                        payload,
+                        filled_qty,
+                        unfilled_qty,
+                        remaining_qty=remaining,
+                    )
+                    extra_obj["active_sell_state"] = active_state
+                    extra_json = json.dumps(extra_obj, ensure_ascii=False)
                     new_status = 'CLOSED' if remaining <= 0 else 'SELL_PARTIAL'
                     self.persistence.execute(
                         "UPDATE tracked_symbols SET is_holding=?, has_open_order=?, current_state=?, updated_at=? WHERE code=?",
@@ -2154,11 +2528,26 @@ class OrderManager(QObject):
                         "UPDATE trade_cycles SET sell_filled_at=?, status=?, extra_json=? WHERE cycle_id=?",
                         (now, new_status, extra_json, cycle["cycle_id"]),
                     )
+                    if remaining > 0:
+                        self._save_position_active_sell_state(account_no, code, active_state)
                 else:
+                    active_state = self._update_take_profit_state_from_sell_payload(
+                        active_state,
+                        payload,
+                        filled_qty,
+                        unfilled_qty,
+                    )
+                    extra_obj["order_no"] = payload.get("order_no", "")
+                    extra_obj["latest_chejan"] = payload
+                    extra_obj["active_sell_state"] = active_state
+                    extra_json = json.dumps(extra_obj, ensure_ascii=False)
                     self.persistence.execute(
                         "UPDATE trade_cycles SET status='SELL_PENDING', extra_json=? WHERE cycle_id=?",
                         (extra_json, cycle["cycle_id"]),
                     )
+                    if self._current_position_qty(account_no, code) > 0:
+                        self._save_position_active_sell_state(account_no, code, active_state)
+                self._reconcile_pending_exit_switch(account_no, code, cycle=cycle, active_state=active_state)
             self.persistence.write_event('chejan_order', payload)
             self.rebuild_daily_summaries()
             self.positions_changed.emit()
