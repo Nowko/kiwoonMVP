@@ -425,7 +425,7 @@ class TelegramFormatter(object):
         if dart_block:
             rows.extend([
                 "",
-                "<b>DART 징후</b>",
+                "<b>전자공시 확인</b>",
                 dart_block,
             ])
         return "\n".join(rows)
@@ -453,6 +453,69 @@ class TelegramFormatter(object):
         if evidence:
             lines.append("근거: {0}".format(self._escape(" / ".join(evidence[:3]))))
         return "\n".join(lines)
+
+    def _format_dart_signal_block(self, dart_signal):
+        dart_signal = dict(dart_signal or {})
+        if not dart_signal:
+            return ""
+        warning_level = self._normalize_dart_risk_level(
+            self._text(
+                self._pick_first(dart_signal.get("gpt_risk_level"), dart_signal.get("warning_level")),
+                default="",
+            )
+        )
+        if not warning_level:
+            return ""
+        summary = self._text(
+            self._pick_first(dart_signal.get("gpt_summary"), dart_signal.get("warning_summary")),
+            default="-",
+        )
+        summary = self._normalize_dart_summary(summary, warning_level)
+        evidence = list(self._pick_first(dart_signal.get("gpt_evidence"), dart_signal.get("evidence")) or [])
+        evidence = [self._text(item, default="") for item in evidence if self._text(item, default="")]
+        lines = [self._escape(summary or warning_level)]
+        if evidence:
+            lines.append("근거: {0}".format(self._escape(" / ".join(evidence[:3]))))
+        return "\n".join(lines)
+
+    def _normalize_dart_risk_level(self, value):
+        value = self._text(value, default="")
+        mapping = {
+            "주의 없음": "작전 없음",
+            "관찰": "작전 의심",
+            "주의": "작전 주의",
+            "강한 주의": "강한 작전",
+            "작전 없음": "작전 없음",
+            "작전 의심": "작전 의심",
+            "작전 주의": "작전 주의",
+            "강한 작전": "강한 작전",
+        }
+        return mapping.get(value, value)
+
+    def _normalize_dart_summary(self, summary, warning_level):
+        summary = self._text(summary, default="")
+        warning_level = self._text(warning_level, default="")
+        if not summary or summary == "-":
+            return warning_level
+        for raw_level in [
+            "주의 없음",
+            "관찰",
+            "주의",
+            "강한 주의",
+            "작전 없음",
+            "작전 의심",
+            "작전 주의",
+            "강한 작전",
+        ]:
+            normalized = self._normalize_dart_risk_level(raw_level)
+            if summary == raw_level:
+                return normalized
+            prefix = raw_level + ":"
+            if summary.startswith(prefix):
+                return normalized + summary[len(raw_level):]
+        if warning_level:
+            return "{0}: {1}".format(warning_level, summary)
+        return summary
 
     def format_trade_buy_candidate(self, payload):
         pricing = dict(payload.get("pricing") or {})

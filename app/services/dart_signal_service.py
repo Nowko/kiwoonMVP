@@ -436,6 +436,16 @@ class DartSignalService(object):
             return u"관찰"
         return u"주의 없음"
 
+    def _warning_level(self, score):
+        score = float(score or 0.0)
+        if score >= 70:
+            return u"강한 작전"
+        if score >= 50:
+            return u"작전 주의"
+        if score >= 25:
+            return u"작전 의심"
+        return u"작전 없음"
+
     def _build_summary(self, warning_level, tags, evidence):
         pieces = []
         if tags.get("mezzanine_flag"):

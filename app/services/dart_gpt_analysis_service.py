@@ -86,7 +86,7 @@ class DartGPTAnalysisService(object):
             "범죄 여부를 단정하지 말고 구조적 위험 징후만 평가하라. "
             "반드시 메자닌 징후, 희석 징후, 출회 징후, 조합 징후, 지배구조 징후, 종합 판단, 핵심 근거를 다뤄라. "
             "출력은 JSON 객체 하나만 반환하라. "
-            "risk_level은 주의 없음, 관찰, 주의, 강한 주의 중 하나여야 한다."
+            "risk_level은 작전 없음, 작전 의심, 작전 주의, 강한 작전 중 하나여야 한다."
         )
 
     def _build_user_prompt(self, name, code, disclosures):
@@ -120,7 +120,7 @@ class DartGPTAnalysisService(object):
             '  "overhang_signal": "없음|약함|있음|강함",',
             '  "association_signal": "없음|약함|있음|강함",',
             '  "control_change_signal": "없음|약함|있음|강함",',
-            '  "risk_level": "주의 없음|관찰|주의|강한 주의",',
+            '  "risk_level": "작전 없음|작전 의심|작전 주의|강한 작전",',
             '  "evidence": ["근거 1", "근거 2", "근거 3"],',
             '  "notes": "실무 메모"',
             "}",
