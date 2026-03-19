@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import datetime
 import json
+import queue
+import threading
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -20,6 +22,16 @@ class DartAnalysisManager(QObject):
         self.api_service = DartApiService(paths, credential_manager=credential_manager)
         self.signal_service = DartSignalService(persistence=persistence)
         self.gpt_service = DartGPTAnalysisService(credential_manager=credential_manager)
+        self._analysis_job_queue = queue.Queue()
+        self._pending_codes = set()
+        self._pending_lock = threading.RLock()
+        self._error_log_ts = {}
+        self._analysis_thread = threading.Thread(
+            target=self._analysis_worker_loop,
+            name="dart-analysis-worker",
+            daemon=True,
+        )
+        self._analysis_thread.start()
         if self.credential_manager is not None and hasattr(self.credential_manager, "credentials_changed"):
             self.credential_manager.credentials_changed.connect(self.refresh_from_credentials)
 
@@ -45,7 +57,53 @@ class DartAnalysisManager(QObject):
             return {}
         return self._row_to_result(row)
 
-    def analyze_stock(self, name, code, days=180, allow_ai=True, use_cache=True, max_age_minutes=30):
+    def get_signal_for_news(self, name, code, days=180, fresh_max_age_minutes=30, stale_max_age_minutes=720):
+        code = str(code or "").strip()
+        name = str(name or "").strip()
+        if not code:
+            return {}
+
+        fresh = self.get_cached_signal(code, max_age_minutes=fresh_max_age_minutes)
+        if fresh:
+            return fresh
+
+        stale = self.get_cached_signal(code, max_age_minutes=stale_max_age_minutes)
+        if stale:
+            self.request_analysis_refresh(name, code, days=days, allow_ai=True)
+            return stale
+
+        quick = self.analyze_stock(
+            name=name,
+            code=code,
+            days=days,
+            allow_ai=False,
+            use_cache=False,
+            include_details=False,
+            emit_logs=False,
+            persist=True,
+        )
+        self.request_analysis_refresh(name, code, days=days, allow_ai=True)
+        return quick
+
+    def request_analysis_refresh(self, name, code, days=180, allow_ai=True):
+        code = str(code or "").strip()
+        if not code:
+            return False
+        with self._pending_lock:
+            if code in self._pending_codes:
+                return False
+            self._pending_codes.add(code)
+        self._analysis_job_queue.put(
+            {
+                "name": str(name or "").strip(),
+                "code": code,
+                "days": max(1, int(days or 180)),
+                "allow_ai": bool(allow_ai),
+            }
+        )
+        return True
+
+    def analyze_stock(self, name, code, days=180, allow_ai=True, use_cache=True, max_age_minutes=30, include_details=True, emit_logs=True, persist=True):
         code = str(code or "").strip()
         name = str(name or "").strip()
         if not code:
@@ -55,12 +113,15 @@ class DartAnalysisManager(QObject):
             if cached:
                 return cached
         disclosures = self.api_service.fetch_recent_disclosures(code, days=days)
-        disclosures = self.api_service.enrich_disclosures(disclosures, force=False, max_age_hours=168)
         risk_disclosures = self.signal_service.filter_risky_financing_disclosures(disclosures)
+        if include_details and risk_disclosures:
+            risk_disclosures = self.api_service.enrich_disclosures(risk_disclosures, force=False, max_age_hours=168)
+            risk_disclosures = self.signal_service.filter_risky_financing_disclosures(risk_disclosures)
         signal_result = self.signal_service.score_signals(code, name, risk_disclosures)
-        self.signal_service.save_event_cache(risk_disclosures)
-        self.signal_service.save_signal_summary(signal_result)
-        if allow_ai and risk_disclosures:
+        if persist:
+            self.signal_service.save_event_cache(risk_disclosures)
+            self.signal_service.save_signal_summary(signal_result)
+        if allow_ai and include_details and risk_disclosures and self._should_run_ai(signal_result):
             try:
                 gpt_result = self.gpt_service.analyze_disclosures_with_gpt(
                     name=name,
@@ -69,11 +130,69 @@ class DartAnalysisManager(QObject):
                     fallback=signal_result,
                 )
                 signal_result["gpt_analysis"] = dict(gpt_result or {})
-                self._save_gpt_payload(code, gpt_result)
-                self.log_emitted.emit(u"🤖 DART 공시 GPT 분석 적용: {0} / {1}".format(code, self.gpt_service.model))
+                if persist:
+                    self._save_gpt_payload(code, gpt_result)
+                if emit_logs:
+                    self.log_emitted.emit(u"🤖 DART 공시 GPT 분석 적용: {0} / {1}".format(code, self.gpt_service.model))
             except Exception as exc:
-                self.log_emitted.emit(u"⚠️ DART 공시 GPT 분석 실패: {0} / {1}".format(code, exc))
+                if emit_logs:
+                    self.log_emitted.emit(u"⚠️ DART 공시 GPT 분석 실패: {0} / {1}".format(code, exc))
         return signal_result
+
+    def _should_run_ai(self, signal_result):
+        if not self.gpt_service.enabled:
+            return False
+        result = dict(signal_result or {})
+        warning_score = float(result.get("warning_score", 0) or 0)
+        active_flags = sum(
+            1 for key in [
+                "mezzanine_flag",
+                "dilution_flag",
+                "overhang_flag",
+                "association_flag",
+                "control_change_flag",
+            ]
+            if int(result.get(key, 0) or 0)
+        )
+        return warning_score >= 50 or active_flags >= 2
+
+    def _analysis_worker_loop(self):
+        while True:
+            job = self._analysis_job_queue.get()
+            if job is None:
+                self._analysis_job_queue.task_done()
+                break
+            code = str(job.get("code", "") or "").strip()
+            try:
+                self.analyze_stock(
+                    name=job.get("name", ""),
+                    code=code,
+                    days=job.get("days", 180),
+                    allow_ai=bool(job.get("allow_ai", True)),
+                    use_cache=False,
+                    include_details=True,
+                    emit_logs=False,
+                    persist=True,
+                )
+            except Exception as exc:
+                self._emit_background_error(code, exc)
+            finally:
+                with self._pending_lock:
+                    self._pending_codes.discard(code)
+                self._analysis_job_queue.task_done()
+
+    def _emit_background_error(self, code, exc, min_interval_sec=300):
+        now_dt = datetime.datetime.now()
+        key = str(code or "").strip() or "_global"
+        last_dt = self._error_log_ts.get(key)
+        if last_dt is not None:
+            try:
+                if (now_dt - last_dt).total_seconds() < float(min_interval_sec):
+                    return
+            except Exception:
+                pass
+        self._error_log_ts[key] = now_dt
+        self.log_emitted.emit(u"⚠️ DART 백그라운드 분석 실패: {0} / {1}".format(code, exc))
 
     def _save_gpt_payload(self, code, gpt_result):
         if self.persistence is None:

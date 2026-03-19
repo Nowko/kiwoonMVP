@@ -1009,14 +1009,23 @@ class NaverNewsManager(QObject):
         if (not bool(cfg.get("enabled"))) or (not str(cfg.get("api_key", "") or "").strip()):
             return {}
         try:
-            result = self.dart_analysis_manager.analyze_stock(
-                name=name,
-                code=code,
-                days=180,
-                allow_ai=True,
-                use_cache=True,
-                max_age_minutes=30,
-            )
+            if hasattr(self.dart_analysis_manager, "get_signal_for_news"):
+                result = self.dart_analysis_manager.get_signal_for_news(
+                    name=name,
+                    code=code,
+                    days=180,
+                    fresh_max_age_minutes=30,
+                    stale_max_age_minutes=720,
+                )
+            else:
+                result = self.dart_analysis_manager.analyze_stock(
+                    name=name,
+                    code=code,
+                    days=180,
+                    allow_ai=True,
+                    use_cache=True,
+                    max_age_minutes=30,
+                )
             if not result:
                 return {}
             payload = {
