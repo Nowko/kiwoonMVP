@@ -248,6 +248,11 @@ class MainWindow(QMainWindow):
         self._log_ui_pending_group_index = {}
         self._log_flush_active_ms = 220
         self._log_flush_idle_ms = 1200
+        self._refresh_market_watch_codes_timer = QTimer(self)
+        self._refresh_market_watch_codes_timer.setSingleShot(True)
+        self._refresh_market_watch_codes_timer.timeout.connect(self._refresh_market_watch_codes)
+        self._last_market_watch_codes_refresh_ts = 0.0
+        self._market_watch_refresh_min_interval_sec = 0.35
 
         self.setWindowTitle("Kiwoom News Trader MVP")
         self._build_ui()
@@ -3226,6 +3231,8 @@ class MainWindow(QMainWindow):
         self.condition_manager.catalog_changed.connect(self._on_catalog_changed)
         self.condition_manager.slots_changed.connect(self._on_slots_changed)
         self.condition_manager.tracked_symbol_changed.connect(self._schedule_refresh_news_watch)
+        self.condition_manager.tracked_symbol_changed.connect(self._schedule_refresh_market_watch_codes)
+        self.condition_manager.symbol_detected.connect(self._schedule_refresh_market_watch_codes)
         self.condition_manager.symbol_detected.connect(self._on_realtime_capture_log_symbol_detected)
         self.edt_condition_search.textChanged.connect(self.refresh_condition_catalog)
         self.btn_assign_slot.clicked.connect(self._assign_selected_condition)
@@ -7016,6 +7023,38 @@ class MainWindow(QMainWindow):
         else:
             self._schedule_news_watch_after_hours_fill("")
         self._schedule_refresh_realtime_strategy_reference_labels(40)
+
+    def _schedule_refresh_market_watch_codes(self, *_args, delay_ms=None):
+        timer = getattr(self, "_refresh_market_watch_codes_timer", None)
+        if timer is None:
+            return
+        requested_delay_ms = int(max(0, delay_ms if delay_ms is not None else 0))
+        min_interval_ms = int(
+            max(50, float(getattr(self, "_market_watch_refresh_min_interval_sec", 0.35) or 0.35) * 1000)
+        )
+        last_ts = float(getattr(self, "_last_market_watch_codes_refresh_ts", 0.0) or 0.0)
+        elapsed_ms = int(max(0.0, (time.monotonic() - last_ts) * 1000)) if last_ts > 0 else min_interval_ms
+        if requested_delay_ms <= 0 and not timer.isActive() and elapsed_ms >= min_interval_ms:
+            self._refresh_market_watch_codes()
+            return
+        remaining_ms = max(0, min_interval_ms - elapsed_ms)
+        timer.start(max(40, requested_delay_ms, remaining_ms))
+
+    def _refresh_market_watch_codes(self):
+        self._last_market_watch_codes_refresh_ts = time.monotonic()
+        manager = getattr(self.strategy_manager, "realtime_market_state_manager", None)
+        if manager is not None and hasattr(manager, "refresh_watch_codes"):
+            try:
+                return list(manager.refresh_watch_codes() or [])
+            except Exception:
+                return []
+        order_manager = getattr(self, "order_manager", None)
+        if order_manager is not None and hasattr(order_manager, "_refresh_holding_realtime_watch"):
+            try:
+                order_manager._refresh_holding_realtime_watch()
+            except Exception:
+                return []
+        return []
 
     def _resolve_realtime_preview_target(self):
         now_dt = datetime.datetime.now()

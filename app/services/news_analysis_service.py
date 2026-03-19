@@ -349,6 +349,47 @@ class GPTNewsAnalyzer(object):
         })
         return result
 
+    def _event_label(self, event_type):
+        mapping = {
+            "contract": u"수주/계약",
+            "earnings": u"실적",
+            "buyback": u"자사주",
+            "mna": u"M&A",
+            "approval": u"허가",
+            "clinical": u"임상",
+            "investment": u"투자",
+            "litigation": u"소송",
+            "general": u"일반",
+        }
+        return mapping.get(str(event_type or "").strip(), u"일반")
+
+    def _build_reason(self, event_type, direction, final_score):
+        score = float(final_score or 0)
+        event_label = self._event_label(event_type)
+        direction = str(direction or "neutral").strip().lower()
+
+        if direction == "bullish":
+            if score >= 85:
+                return u"{0} 모멘텀 강함\n단기 매매 후보".format(event_label)
+            if score >= 70:
+                return u"{0} 기대감 있음\n수급 유입 가능".format(event_label)
+            if score >= 60:
+                return u"{0} 확인 필요\n추가 뉴스 확인".format(event_label)
+            return u"{0} 포함\n추가 확인 필요".format(event_label)
+
+        if direction == "bearish":
+            if score >= 80:
+                return u"{0} 우려 큼\n변동성 확대 가능".format(event_label)
+            if score >= 65:
+                return u"{0} 우려 있음\n보수적 접근 필요".format(event_label)
+            return u"{0} 영향 포함\n추가 확인 필요".format(event_label)
+
+        if score >= 80:
+            return u"{0} 영향 있음\n재평가 가능".format(event_label)
+        if score >= 65:
+            return u"{0} 중립적\n확인 필요".format(event_label)
+        return u"{0} 포함\n관찰 유지".format(event_label)
+
     def _build_payload(self, context):
         title = self._sanitize_prompt_text(context.get("title", "") or "", max_len=300)
         description = self._sanitize_prompt_text(context.get("description", "") or "", max_len=1200)
